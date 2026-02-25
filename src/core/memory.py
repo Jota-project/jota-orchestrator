@@ -65,10 +65,10 @@ class MemoryManager:
             # Autenticación interna con el orchestrator
             logger.debug("Probando autenticación interna con JotaDB...")
             
-            # Headers para autenticación interna: Bearer + X-Client-ID + X-API-Key
+            # Headers para autenticación interna: Bearer + X-Service-ID + X-API-Key
             internal_auth_headers = {
                 **self.base_headers,  # Incluye Bearer token (JOTA_DB_SK)
-                "X-Client-ID": settings.ORCHESTRATOR_ID,
+                "X-Service-ID": settings.ORCHESTRATOR_ID,
                 "X-API-Key": settings.ORCHESTRATOR_API_KEY
             }
             
@@ -122,9 +122,9 @@ class MemoryManager:
             logger.error(f"Error validating client key: {e}")
             return False
 
-    async def get_or_create_conversation(self, user_id: str, client_id: int) -> Dict[str, Any]:
+    async def create_conversation(self, user_id: str, client_id: int) -> Dict[str, Any]:
         """
-        Retrieves active conversation for user_id or creates a new one.
+
         Returns the conversation object (dict).
         """
         try:
@@ -134,15 +134,15 @@ class MemoryManager:
                 "X-Client-ID": str(client_id)
             }
             
-            response = await self.client.get(f"{self.base_url}/chat/conversation", params={"client_id": user_id, "status": "active"}, headers=service_headers)
-            if response.status_code == 200:
-                conversations = response.json()
-                if conversations and isinstance(conversations, list) and len(conversations) > 0:
-                    return conversations[0]
+            # response = await self.client.get(f"{self.base_url}/chat/conversations", params={"client_id": user_id, "status": "active"}, headers=service_headers)
+            # if response.status_code == 200:
+            #     conversations = response.json()
+            #     if conversations and isinstance(conversations, list) and len(conversations) > 0:
+            #         return conversations[0]
 
             # 2. Create new conversation if none found
             payload = {"client_id": user_id, "status": "active"} 
-            create_response = await self.client.post(f"{self.base_url}/chat/conversation", json=payload, headers=service_headers)
+            create_response = await self.client.post(f"{self.base_url}/chat/conversations", json=payload, headers=service_headers)
             create_response.raise_for_status()
             return create_response.json()
 
@@ -150,7 +150,7 @@ class MemoryManager:
             logger.error(f"Error managing conversation for user {user_id}: {e}")
             raise e
 
-    async def get_conversation_messages(self, conversation_id: str, user_id: str, limit: int = 50) -> list:
+    async def get_conversation_messages(self, conversation_id: str, client_id: Any, limit: int = 50) -> list:
         """
         Retrieves message history from JotaDB for context recovery.
         Returns a list of {"role": ..., "content": ...} dicts.
@@ -161,16 +161,16 @@ class MemoryManager:
             service_headers = {
                  **self.base_headers,
                  "X-API-Key": settings.ORCHESTRATOR_API_KEY,
-                 "X-Client-ID": str(settings.ORCHESTRATOR_ID) # Generic orchestrated query
+                 "X-Client-ID": str(client_id)
             }
-            response = await self.client.get(url, params={"limit": limit, "client_id": user_id}, headers=service_headers)
+            response = await self.client.get(url, params={"limit": limit}, headers=service_headers)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.error(f"Failed to get messages for conversation {conversation_id}: {e}")
             return []
 
-    async def get_user_conversations(self, user_id: str, limit: int = 10) -> list:
+    async def get_user_conversations(self, client_id: Any, limit: int = 10) -> list:
         """
         Retrieves the last N conversations for a user from JotaDB.
         Returns a list of conversation objects, most recent first.
@@ -180,11 +180,11 @@ class MemoryManager:
             service_headers = {
                  **self.base_headers,
                  "X-API-Key": settings.ORCHESTRATOR_API_KEY,
-                 "X-Client-ID": str(settings.ORCHESTRATOR_ID) 
+                 "X-Client-ID": str(client_id)
             }
             response = await self.client.get(
-                f"{self.base_url}/chat/conversation",
-                params={"client_id": user_id, "limit": limit},
+                f"{self.base_url}/chat/conversations",
+                params={"limit": limit},
                 headers=service_headers
             )
             response.raise_for_status()
@@ -193,7 +193,7 @@ class MemoryManager:
             logger.error(f"Failed to get conversations for user {user_id}: {e}")
             return []
 
-    async def save_message(self, conversation_id: str, user_id: str, role: Literal["user", "assistant", "system"], content: str, client_id: int):
+    async def save_message(self, conversation_id: str, user_id: str, role: Literal["user", "assistant", "system"], content: str, client_id: Any):
         """
         Saves a message to JotaDB.
         """
@@ -224,18 +224,18 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Failed to save message to JotaDB: {e}")
 
-    async def mark_conversation_error(self, conversation_id: str, user_id: str):
+    async def mark_conversation_error(self, conversation_id: str, client_id: Any):
          """
          Sets conversation status to error.
          """
          try:
-            url = f"{self.base_url}/chat/conversation/{conversation_id}"
+            url = f"{self.base_url}/chat/conversations/{conversation_id}"
             payload = {"status": "error"}
             # Using orchestrator credentials
             service_headers = {
                  **self.base_headers,
                  "X-API-Key": settings.ORCHESTRATOR_API_KEY,
-                 "X-Client-ID": str(settings.ORCHESTRATOR_ID) 
+                 "X-Client-ID": str(client_id)
             }
             await self.client.patch(url, json=payload, headers=service_headers)
          except Exception as e:

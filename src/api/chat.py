@@ -16,11 +16,13 @@ async def get_conversations(
     """
     Returns the last N conversations for a given user.
     """
-    if not x_client_key or not await memory_manager.validate_client_key(x_client_key):
+    client_data = await memory_manager.validate_client_key(x_client_key)
+    if not x_client_key or not client_data:
         return {"status": "error", "message": "Unauthorized"}
+    client_id = client_data["id"]
 
     try:
-        conversations = await memory_manager.get_user_conversations(user_id, limit=limit)
+        conversations = await memory_manager.get_user_conversations(client_id, limit=limit)
         return {"status": "success", "conversations": conversations}
     except Exception as e:
         logger.error(f"Error retrieving conversations for {user_id}: {e}")
@@ -36,11 +38,13 @@ async def get_conversation_messages(
     """
     Returns the messages for a specific conversation.
     """
-    if not x_client_key or not await memory_manager.validate_client_key(x_client_key):
+    client_data = await memory_manager.validate_client_key(x_client_key)
+    if not x_client_key or not client_data:
         return {"status": "error", "message": "Unauthorized"}
+    client_id = client_data["id"]
 
     try:
-        messages = await memory_manager.get_conversation_messages(conversation_id, user_id, limit=limit)
+        messages = await memory_manager.get_conversation_messages(conversation_id, client_id, limit=limit)
         return {"status": "success", "messages": messages}
     except Exception as e:
         logger.error(f"Error retrieving messages for conversation {conversation_id}: {e}")
@@ -56,11 +60,13 @@ async def get_conversation_messages_endpoint(
     """
     Returns messages for a specific conversation.
     """
-    if not x_client_key or not await memory_manager.validate_client_key(x_client_key):
+    client_data = await memory_manager.validate_client_key(x_client_key)
+    if not x_client_key or not client_data:
         return {"status": "error", "message": "Unauthorized"}
+    client_id = client_data["id"]
 
     try:
-        messages = await memory_manager.get_conversation_messages(conversation_id, user_id, limit=limit)
+        messages = await memory_manager.get_conversation_messages(conversation_id, client_id, limit=limit)
         return {"status": "success", "messages": messages}
     except Exception as e:
         logger.error(f"Error retrieving messages for conv {conversation_id}: {e}")
@@ -87,7 +93,7 @@ async def chat_endpoint(
 
     try:
         # 2. Conversation Management
-        conversation = await memory_manager.get_or_create_conversation(request.user_id, client_id=client_id)
+        conversation = await memory_manager.create_conversation(request.user_id, client_id=client_id)
         conversation_id = conversation["id"]
 
         # 3. Ephemeral Session (aborts previous if exists)
@@ -97,7 +103,7 @@ async def chat_endpoint(
         logger.info(f"{log_prefix} Processing REST chat request")
 
         # 4. Recover context from DB and inject into session
-        context = await memory_manager.get_conversation_messages(conversation_id, request.user_id)
+        context = await memory_manager.get_conversation_messages(conversation_id, client_id)
         await inference_client.set_context(session_id, context)
 
         # 5. Save User Message
@@ -155,14 +161,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         # 2. Conversation Management
         conversation_id = websocket.query_params.get("conversation_id")
         if not conversation_id:
-            conversation = await memory_manager.get_or_create_conversation(user_id, client_id=client_id)
+            conversation = await memory_manager.create_conversation(user_id, client_id=client_id)
             conversation_id = conversation["id"]
 
         # 3. Ephemeral Session (aborts previous if exists)
         session_id = await inference_client.ensure_session(user_id)
 
         # 4. Recover context from DB and inject into session
-        context = await memory_manager.get_conversation_messages(conversation_id, user_id)
+        context = await memory_manager.get_conversation_messages(conversation_id, client_id)
         await inference_client.set_context(session_id, context)
 
         log_prefix = f"[Conv: {conversation_id}][Sess: {session_id}]"

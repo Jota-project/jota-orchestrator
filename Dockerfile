@@ -16,5 +16,4 @@ COPY src/ ./src/
 # Make port 8000 available to the world outside this container
 EXPOSE 8000
 
-# Run app.py using Gunicorn with Uvicorn workers
-CMD ["gunicorn", "src.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "src.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--log-level", "info"]

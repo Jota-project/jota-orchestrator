@@ -250,15 +250,29 @@ class InferenceClient:
              except Exception as e:
                  logger.error(f"Failed to abort session {session_id}: {e}")
 
+    async def close_session(self, session_id: str):
+        """
+        Closes and frees the session from the InferenceCenter.
+        """
+        if self.is_connected:
+             try:
+                 await self.websocket.send(json.dumps({
+                     "op": "close_session",
+                     "session_id": session_id
+                 }))
+                 logger.info(f"Closed session {session_id}")
+             except Exception as e:
+                 logger.error(f"Failed to close session {session_id}: {e}")
+
     async def ensure_session(self, user_id: str) -> str:
         """
-        Creates a fresh session for a user, aborting any existing one first.
+        Creates a fresh session for a user, closing any existing one first.
         Tracks active sessions to avoid leaving dangling resources.
         """
         old_session = self._user_sessions.get(user_id)
         if old_session:
             logger.info(f"Closing previous session {old_session} for user {user_id}")
-            await self.abort_session(old_session)
+            await self.close_session(old_session)
         
         session_id = await self.create_session()
         self._user_sessions[user_id] = session_id
@@ -270,7 +284,7 @@ class InferenceClient:
         Sends conversation history to the InferenceCenter for context recovery.
         Must be called after create_session and before infer.
         """
-        if not self.websocket or not self.websocket.open:
+        if not self.is_connected:
             raise Exception("Inference Engine not connected")
         
         payload = {
@@ -285,13 +299,13 @@ class InferenceClient:
 
     async def release_session(self, user_id: str):
         """
-        Aborts and unregisters a user's active session.
+        Closes and unregisters a user's active session.
         Called on client disconnect to free InferenceCenter resources.
         """
         session_id = self._user_sessions.pop(user_id, None)
         if session_id:
             logger.info(f"Releasing session {session_id} for user {user_id}")
-            await self.abort_session(session_id)
+            await self.close_session(session_id)
 
     async def infer(self, session_id: str, prompt: str, conversation_id: str, user_id: str, params: Optional[Dict[str, Any]] = None, client_id: int = None) -> AsyncGenerator[str, None]:
         if params is None:
