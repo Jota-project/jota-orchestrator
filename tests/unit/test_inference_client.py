@@ -17,7 +17,7 @@ async def test_inference_client_initialization(inference_config):
     assert client.active_sessions == {}
 
 @pytest.mark.asyncio
-async def test_inference_client_defaults(mock_settings):
+async def test_inference_client_defaults(mock_settings, mock_memory_manager):
     """Test that the client initializes with default settings."""
     # We need to make sure settings are mocked if we rely on them
     # But here we are passing explicit None to trigger defaults from settings
@@ -33,7 +33,7 @@ async def test_inference_client_defaults(mock_settings):
         mock_conf.INFERENCE_CLIENT_ID = "default_id"
         mock_conf.INFERENCE_API_KEY = "default_key"
         
-        client = InferenceClient()
+        client = InferenceClient(memory_manager=mock_memory_manager)
         assert client.url == "ws://default"
         assert client.client_id == "default_id"
 

@@ -17,9 +17,18 @@ def mock_settings(monkeypatch):
     monkeypatch.setenv("INFERENCE_API_KEY", "test_key")
 
 @pytest.fixture
-def inference_config():
+def mock_memory_manager():
+    from unittest.mock import AsyncMock
+    manager = AsyncMock()
+    manager.save_message = AsyncMock()
+    manager.mark_conversation_error = AsyncMock()
+    return manager
+
+@pytest.fixture
+def inference_config(mock_memory_manager):
     return {
         "url": "ws://test-server",
         "client_id": "unit-test-client",
-        "api_key": "unit-test-key"
+        "api_key": "unit-test-key",
+        "memory_manager": mock_memory_manager
     }

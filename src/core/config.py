@@ -5,7 +5,6 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = False
     
-    REDIS_URL: str
     TRANSCRIPTION_SERVICE_URL: str
     
     INFERENCE_SERVICE_URL: str

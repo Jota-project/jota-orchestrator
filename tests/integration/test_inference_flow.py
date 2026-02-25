@@ -13,7 +13,7 @@ async def mock_server():
     await server.stop()
 
 @pytest.mark.asyncio
-async def test_full_inference_flow(mock_server):
+async def test_full_inference_flow(mock_server, mock_memory_manager):
     """
     Test the complete flow: 
     Connect -> Auth -> Create Session -> Infer -> Receive Tokens
@@ -21,7 +21,8 @@ async def test_full_inference_flow(mock_server):
     client = InferenceClient(
         url="ws://localhost:8766",
         client_id="test_client",
-        api_key="test_key"
+        api_key="test_key",
+        memory_manager=mock_memory_manager
     )
 
     try:
@@ -53,14 +54,15 @@ async def test_full_inference_flow(mock_server):
         await client.invoke_shutdown()
 
 @pytest.mark.asyncio
-async def test_concurrent_sessions(mock_server):
+async def test_concurrent_sessions(mock_server, mock_memory_manager):
     """
     Test multiple concurrent inference sessions.
     """
     client = InferenceClient(
         url="ws://localhost:8766",
         client_id="test_client",
-        api_key="test_key"
+        api_key="test_key",
+        memory_manager=mock_memory_manager
     )
     
     await client.connect()

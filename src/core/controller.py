@@ -31,9 +31,10 @@ class JotaController:
         content = payload.get("content")
         session_id = payload.get("session_id")
         conversation_id = payload.get("conversation_id")
+        user_id = payload.get("user_id")
         
-        if not session_id or not conversation_id:
-             logger.error("Missing session_id or conversation_id in payload")
+        if not session_id or not conversation_id or not user_id:
+             logger.error("Missing session_id, conversation_id, or user_id in payload")
              yield " [Error: Internal Context Missing]"
              return
 
@@ -44,7 +45,7 @@ class JotaController:
         # Call Inference & Stream
         try:
             logger.info("Streaming from Inference Engine...")
-            async for token in self.inference_client.infer(session_id, content, conversation_id):
+            async for token in self.inference_client.infer(session_id, content, conversation_id, user_id):
                 yield token
             
             logger.info("Inference stream complete.")

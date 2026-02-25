@@ -21,6 +21,7 @@ class InferenceClient:
         self.lock = asyncio.Lock()
         
         self.active_sessions: Dict[str, str] = {}
+        self._user_sessions: Dict[str, str] = {}  # user_id -> session_id tracking
         self._response_queues: Dict[str, asyncio.Queue] = {}
         self._pending_sessions: Dict[str, asyncio.Future] = {} 
         self._session_creation_future: Optional[asyncio.Future] = None
@@ -218,8 +219,50 @@ class InferenceClient:
              except Exception as e:
                  logger.error(f"Failed to abort session {session_id}: {e}")
 
-    async def infer(self, session_id: str, prompt: str, conversation_id: str, params: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
-        # Using Remote's robust implementation
+    async def ensure_session(self, user_id: str) -> str:
+        """
+        Creates a fresh session for a user, aborting any existing one first.
+        Tracks active sessions to avoid leaving dangling resources.
+        """
+        old_session = self._user_sessions.get(user_id)
+        if old_session:
+            logger.info(f"Closing previous session {old_session} for user {user_id}")
+            await self.abort_session(old_session)
+        
+        session_id = await self.create_session()
+        self._user_sessions[user_id] = session_id
+        logger.info(f"New session {session_id} assigned to user {user_id}")
+        return session_id
+
+    async def set_context(self, session_id: str, messages: list):
+        """
+        Sends conversation history to the InferenceCenter for context recovery.
+        Must be called after create_session and before infer.
+        """
+        if not self.websocket or not self.websocket.open:
+            raise Exception("Inference Engine not connected")
+        
+        payload = {
+            "op": "set_context",
+            "session_id": session_id,
+            "context": {
+                "messages": messages
+            }
+        }
+        await self.websocket.send(json.dumps(payload))
+        logger.info(f"Context set for session {session_id} ({len(messages)} messages)")
+
+    async def release_session(self, user_id: str):
+        """
+        Aborts and unregisters a user's active session.
+        Called on client disconnect to free InferenceCenter resources.
+        """
+        session_id = self._user_sessions.pop(user_id, None)
+        if session_id:
+            logger.info(f"Releasing session {session_id} for user {user_id}")
+            await self.abort_session(session_id)
+
+    async def infer(self, session_id: str, prompt: str, conversation_id: str, user_id: str, params: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         if params is None:
             params = {"temp": 0.7}
             
@@ -262,7 +305,7 @@ class InferenceClient:
                     yield content
                 elif op == "end":
                     full_response = "".join(response_buffer)
-                    await self.memory_manager.save_message(conversation_id, "assistant", full_response)
+                    await self.memory_manager.save_message(conversation_id, user_id, "assistant", full_response)
                     logger.info(f"{log_prefix} Inference complete.")
                     break
                 elif op == "error":
@@ -275,9 +318,9 @@ class InferenceClient:
             if response_buffer:
                 logger.info(f"{log_prefix} Saving interrupted response.")
                 partial_response = "".join(response_buffer) + " [INTERRUPTED]"
-                await self.memory_manager.save_message(conversation_id, "assistant", partial_response)
+                await self.memory_manager.save_message(conversation_id, user_id, "assistant", partial_response)
             
-            await self.memory_manager.mark_conversation_error(conversation_id)
+            await self.memory_manager.mark_conversation_error(conversation_id, user_id)
             raise e
         finally:
              if session_id in self._response_queues:
