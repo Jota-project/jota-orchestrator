@@ -69,7 +69,8 @@ class InferenceClient:
         self.active_sessions: Dict[str, str] = {}
         self._user_sessions: Dict[str, str] = {}  # user_id -> session_id tracking
         self._response_queues: Dict[str, asyncio.Queue] = {}
-        self._pending_sessions: Dict[str, asyncio.Future] = {} 
+        self._pending_sessions: Dict[str, asyncio.Future] = {}
+        self._pending_commands: Dict[str, asyncio.Future] = {}
         self._session_creation_future: Optional[asyncio.Future] = None
         self._auth_future: Optional[asyncio.Future] = None
         # Modelo actualmente cargado en el InferenceCenter.
@@ -306,7 +307,9 @@ class InferenceClient:
             "session_created":     self._handle_session_created,
             "session_error":       self._handle_session_error,
             "LIST_MODELS_RESULT":  self._handle_list_models_result,
+            "list_models_result":  self._handle_list_models_result,
             "LOAD_MODEL_RESULT":   self._handle_load_model_result,
+            "load_model_result":   self._handle_load_model_result,
         }
 
         try:
