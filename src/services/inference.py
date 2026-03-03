@@ -300,6 +300,9 @@ class InferenceClient:
         """
         Reads messages from WebSocket and dispatches them to typed handlers.
         """
+        async def _noop(data: dict, session_id) -> None:
+            logger.debug(f"Acknowledged op='{data.get('op')}' (no action needed)")
+
         _handlers = {
             "hello":               self._handle_hello,
             "auth_success":        self._handle_auth_success,
@@ -310,6 +313,10 @@ class InferenceClient:
             "list_models_result":  self._handle_list_models_result,
             "LOAD_MODEL_RESULT":   self._handle_load_model_result,
             "load_model_result":   self._handle_load_model_result,
+            # Acks del Engine que no requieren acción
+            "context_set":         _noop,
+            "context_error":       _noop,
+            "session_closed":      _noop,
         }
 
         try:
@@ -460,18 +467,25 @@ class InferenceClient:
             future = asyncio.Future()
             self._pending_commands["load_model"] = future
 
+            logger.info(
+                f"[TRACE] Sending COMMAND_LOAD_MODEL to engine \u2014 model_id={model_id!r} "
+                f"(current_engine_model before={self.current_engine_model!r})"
+            )
             await self.websocket.send(json.dumps({
                 "op": "COMMAND_LOAD_MODEL",
                 "model_id": model_id
             }))
 
             result = await asyncio.wait_for(future, timeout=30.0)
+            logger.info(f"[TRACE] LOAD_MODEL_RESULT from engine \u2014 raw={result!r}")
             success = result.get("status") == "SUCCESS"
             if success:
                 self.current_engine_model = model_id
-                logger.info(f"✅ Model loaded and tracked: {model_id}")
+                logger.info(
+                    f"[TRACE] \u2705 Model loaded \u2014 current_engine_model={self.current_engine_model!r} \u2014 IN SYNC"
+                )
             else:
-                logger.error(f"❌ Failed to load model {model_id}: {result}")
+                logger.error(f"[TRACE] \u274c Failed to load model {model_id!r}: {result}")
             return success
 
     async def infer(

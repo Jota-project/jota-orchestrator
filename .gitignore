@@ -23,6 +23,8 @@ wheels/
 
 # Virtual Environment
 venv/
+.venv/
+.venv_test/
 ENV/
 
 # Logs

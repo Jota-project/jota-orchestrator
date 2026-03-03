@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     ORCHESTRATOR_ID: str  # ID del Orchestrator para servicios internos
     ORCHESTRATOR_API_KEY: str  # API Key del Orchestrator para servicios internos
     
+    # Tool Config
+    TAVILY_API_KEY: str
+
+    
     # JotaDB Integration
     JOTA_DB_URL: str
     JOTA_DB_SK: str  # Server Key - sent as Bearer token for DB access

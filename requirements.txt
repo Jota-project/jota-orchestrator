@@ -6,3 +6,5 @@ httpx
 pytest
 pytest-asyncio
 gunicorn
+tavily-python
+mcp

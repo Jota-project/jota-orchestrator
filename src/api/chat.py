@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Header, HT
 from pydantic import BaseModel
 from typing import Optional
 from src.core.services import jota_controller, memory_manager, inference_client
+import json as _json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,24 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 user_id, client_id=client_id, model_id=model_id
             )
             conversation_id = conversation["id"]
+            logger.info(
+                f"[TRACE][Conv: {conversation_id}] New conversation created "
+                f"for user={user_id} model_id={model_id!r}"
+            )
+        elif model_id:
+            # Client reconnected with an existing conversation and a new model_id.
+            # switch_model atomically loads in engine + updates DB.
+            logger.info(
+                f"[TRACE][Conv: {conversation_id}] Reconnect with model change — "
+                f"engine_current={inference_client.current_engine_model!r} "
+                f"→ requested={model_id!r}. Calling switch_model."
+            )
+            await jota_controller.switch_model(conversation_id, client_id, model_id)
+        else:
+            logger.info(
+                f"[TRACE][Conv: {conversation_id}] Reconnect without model change "
+                f"(engine_current={inference_client.current_engine_model!r})."
+            )
 
         # 3. Ephemeral Session (aborts previous if exists)
         session_id = await inference_client.ensure_session(user_id)
@@ -231,16 +250,64 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         while True:
             data = await websocket.receive_text()
             logger.info(f"{log_prefix} Received via WS: {data}")
-            
-            # 5. Save User Message
+
+            # -- Control message: JSON envelope with "type" field --
+            # Allows mid-session operations without reconnecting.
+            try:
+                ctrl = _json.loads(data)
+                if isinstance(ctrl, dict) and "type" in ctrl:
+                    msg_type = ctrl["type"]
+
+                    if msg_type == "switch_model":
+                        new_model = ctrl.get("model_id", "").strip()
+                        if not new_model:
+                            await websocket.send_text(_json.dumps({
+                                "type": "error",
+                                "message": "switch_model requires a non-empty model_id"
+                            }))
+                            continue
+                        logger.info(
+                            f"{log_prefix} [TRACE] Mid-session switch_model requested: "
+                            f"{model_id!r} → {new_model!r}"
+                        )
+                        try:
+                            await jota_controller.switch_model(conversation_id, client_id, new_model)
+                            model_id = new_model  # update local var for next infer
+                            await websocket.send_text(_json.dumps({
+                                "type": "model_switched",
+                                "model_id": new_model
+                            }))
+                            logger.info(
+                                f"{log_prefix} [TRACE] switch_model OK mid-session — "
+                                f"new engine_current={inference_client.current_engine_model!r}"
+                            )
+                        except Exception as sw_err:
+                            logger.error(f"{log_prefix} switch_model failed: {sw_err}")
+                            await websocket.send_text(_json.dumps({
+                                "type": "error",
+                                "message": str(sw_err)
+                            }))
+                        continue  # don't treat this as a prompt
+
+                    # Unknown control type — log and ignore
+                    logger.warning(f"{log_prefix} Unknown control message type: {msg_type!r}")
+                    await websocket.send_text(_json.dumps({
+                        "type": "error",
+                        "message": f"Unknown control type: {msg_type!r}"
+                    }))
+                    continue
+            except _json.JSONDecodeError:
+                pass  # plain text prompt — fall through
+
+            # 5. Save User Message (text prompt)
             await memory_manager.save_message(
-                conversation_id=conversation_id, 
+                conversation_id=conversation_id,
                 user_id=user_id,
-                role="user", 
+                role="user",
                 content=data,
                 client_id=client_id
             )
-            
+
             payload = {
                 "content": data,
                 "session_id": session_id,
@@ -250,7 +317,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 "model_id": model_id,
                 "source": "websocket"
             }
-            
+
+            logger.info(
+                f"{log_prefix} [TRACE] Dispatching to controller — "
+                f"db_model={model_id!r} engine_model={inference_client.current_engine_model!r}"
+            )
+
             # 6. Stream tokens back
             async for token in jota_controller.handle_input(payload):
                 await websocket.send_text(token)

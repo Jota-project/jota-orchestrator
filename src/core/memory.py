@@ -198,6 +198,7 @@ class MemoryManager:
         """
         Retrieves message history from JotaDB for context recovery.
         Returns a list of {"role": ..., "content": ...} dicts.
+        Optimizes tool role outputs by fetching extra context and truncating long tool data.
         """
         try:
             url = f"{self.base_url}/chat/{conversation_id}/messages"
@@ -207,9 +208,26 @@ class MemoryManager:
                  "X-API-Key": settings.ORCHESTRATOR_API_KEY,
                  "X-Client-ID": str(client_id)
             }
-            response = await self.client.get(url, params={"limit": limit}, headers=service_headers)
+            
+            # Fetch extra history to account for tool invocations
+            fetch_limit = max(limit * 2, 100)
+            response = await self.client.get(url, params={"limit": fetch_limit}, headers=service_headers)
             response.raise_for_status()
-            return response.json()
+            
+            raw_messages = response.json()
+            processed_messages = []
+            
+            for msg in raw_messages:
+                # Local optimization for tool calls to avoid context inflation
+                if msg.get("role") == "tool":
+                    content = msg.get("content", "")
+                    # Cap tool output footprint to ~1500 chars to avoid model distraction and token explosion
+                    if content and len(content) > 1500:
+                        msg["content"] = content[:1500] + "\n...[TRUNCATED TO PREVENT CONTEXT SATURATION]"
+                processed_messages.append(msg)
+                
+            # Return up to 'fetch_limit' elements; the downstream model needs the tool traces chronologically
+            return processed_messages
         except Exception as e:
             logger.error(f"Failed to get messages for conversation {conversation_id}: {e}")
             return []
@@ -241,7 +259,7 @@ class MemoryManager:
         self,
         conversation_id: str,
         user_id: str,
-        role: Literal["user", "assistant", "system"],
+        role: Literal["user", "assistant", "system", "tool"],
         content: str,
         client_id: Any,
         metadata: Optional[Dict] = None,
@@ -252,8 +270,9 @@ class MemoryManager:
         Args:
             metadata: Datos adicionales a persistir con el mensaje, por ejemplo
                       {"model_id": "llama3-8b"} para trazabilidad del modelo generador.
+                      O para tools: {"tool_name": "tavily", "execution_time": "1.2s"}
         """
-        if role not in ["user", "assistant", "system"]:
+        if role not in ["user", "assistant", "system", "tool"]:
             logger.error(f"Invalid message role: {role} - Message not saved.")
             return
 
