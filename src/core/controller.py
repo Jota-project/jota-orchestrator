@@ -67,7 +67,7 @@ class JotaController:
             logger.debug(f"Conversation {conversation_id} has no model_id set. Skipping model check.")
             return
 
-        active_model = self.inference_client._active_model_id
+        active_model = self.inference_client.current_engine_model
         if active_model == required_model:
             logger.debug(f"Model '{required_model}' already active. No switch needed.")
             return
@@ -114,7 +114,7 @@ class JotaController:
             await self._ensure_model_loaded(conversation_id, client_id)
 
             # Usar el modelo activo real (puede haber sido actualizado por _ensure_model_loaded)
-            effective_model = self.inference_client._active_model_id or model_id
+            effective_model = self.inference_client.current_engine_model or model_id
 
             logger.info(f"Streaming from Inference Engine (model={effective_model!r})...")
             async for token in self.inference_client.infer(

@@ -20,11 +20,12 @@ Protocolo (operaciones entrantes):
   token / end       → Tokens de streaming de inferencia.
 """
 import asyncio
+import time
 import websockets
 import json
 import logging
 import ssl
-from typing import Dict, AsyncGenerator, Any, Optional
+from typing import Dict, AsyncGenerator, Any, Optional, List
 
 from src.core.config import settings
 from src.core.memory import MemoryManager
@@ -71,12 +72,15 @@ class InferenceClient:
         self._pending_sessions: Dict[str, asyncio.Future] = {} 
         self._session_creation_future: Optional[asyncio.Future] = None
         self._auth_future: Optional[asyncio.Future] = None
-        # Futures para comandos de gestión de modelos: {command_key -> Future}
-        self._pending_commands: Dict[str, asyncio.Future] = {}
-        # Modelo actualmente cargado en el InferenceCenter (None = desconocido)
-        self._active_model_id: Optional[str] = None
+        # Modelo actualmente cargado en el InferenceCenter.
+        # Nombre sin guión bajo: es estado público observable por el controller.
+        self.current_engine_model: Optional[str] = None
         # Lock para serializar cargas de modelo (evita race conditions en el Engine)
         self._model_load_lock: asyncio.Lock = asyncio.Lock()
+        # Caché de la lista de modelos disponibles
+        self._models_cache: Optional[List] = None
+        self._models_cache_expires: float = 0.0   # tiempo monotonic de expiración
+        self._models_cache_ttl: float = 300.0     # TTL en segundos (5 minutos)
 
         # Background tasks
         self._connection_task = None
@@ -408,15 +412,32 @@ class InferenceClient:
             await self.close_session(session_id)
     
     async def list_models(self) -> list:
-        """Solicita al InferenceCenter la lista de modelos disponibles."""
+        """Solicita al InferenceCenter la lista de modelos disponibles.
+
+        La respuesta se cachea durante `_models_cache_ttl` segundos (default 5 min).
+        Las peticiones dentro de la ventana de TTL devuelven el resultado en memoria
+        sin enviar ningún mensaje al bus de comunicación con el Engine.
+        """
+        now = time.monotonic()
+        if self._models_cache is not None and now < self._models_cache_expires:
+            logger.debug(f"list_models: returning cached ({int(self._models_cache_expires - now)}s left)")
+            return self._models_cache
+
         if not self.is_connected:
             raise Exception("Inference Engine no conectado")
-        
+
         future = asyncio.Future()
-        self._pending_commands["list_models"] = future 
-        
+        self._pending_commands["list_models"] = future
+
         await self.websocket.send(json.dumps({"op": "COMMAND_LIST_MODELS"}))
-        return await asyncio.wait_for(future, timeout=10.0)
+        result = await asyncio.wait_for(future, timeout=10.0)
+
+        # Actualizar caché
+        models = result.get("models", result)  # compatibilidad con distintos formatos
+        self._models_cache = models
+        self._models_cache_expires = now + self._models_cache_ttl
+        logger.info(f"list_models: cache refreshed ({len(models) if isinstance(models, list) else '?'} models, TTL={self._models_cache_ttl}s)")
+        return models
 
     async def load_model(self, model_id: str) -> bool:
         """Solicita la carga de un modelo específico y actualiza el estado local.
@@ -444,7 +465,7 @@ class InferenceClient:
             result = await asyncio.wait_for(future, timeout=30.0)
             success = result.get("status") == "SUCCESS"
             if success:
-                self._active_model_id = model_id
+                self.current_engine_model = model_id
                 logger.info(f"✅ Model loaded and tracked: {model_id}")
             else:
                 logger.error(f"❌ Failed to load model {model_id}: {result}")
