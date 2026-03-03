@@ -50,28 +50,6 @@ async def get_conversation_messages(
         logger.error(f"Error retrieving messages for conversation {conversation_id}: {e}")
         return {"status": "error", "message": str(e)}
 
-@router.get("/chat/conversations/{user_id}/{conversation_id}/messages")
-async def get_conversation_messages_endpoint(
-    user_id: str,
-    conversation_id: str,
-    x_client_key: str = Header(..., description="Client authentication key"),
-    limit: int = Query(50, ge=1, le=100, description="Number of messages to retrieve")
-):
-    """
-    Returns messages for a specific conversation.
-    """
-    client_data = await memory_manager.validate_client_key(x_client_key)
-    if not x_client_key or not client_data:
-        return {"status": "error", "message": "Unauthorized"}
-    client_id = client_data["id"]
-
-    try:
-        messages = await memory_manager.get_conversation_messages(conversation_id, client_id, limit=limit)
-        return {"status": "success", "messages": messages}
-    except Exception as e:
-        logger.error(f"Error retrieving messages for conv {conversation_id}: {e}")
-        return {"status": "error", "message": str(e)}
-
 class ChatRequest(BaseModel):
     text: str
     user_id: str = "api_user"

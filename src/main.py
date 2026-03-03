@@ -66,10 +66,20 @@ async def lifespan(app: FastAPI):
     
     # await task_transcription  # Disabled until MQTT is available
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title=settings.APP_NAME,
     debug=settings.DEBUG,
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permits all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Permits all methods
+    allow_headers=["*"],  # Permits all headers
 )
 
 # app.include_router(chat_router, prefix="/api/v1")
