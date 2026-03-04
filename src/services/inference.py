@@ -520,7 +520,16 @@ class InferenceClient:
         """
         if params is None:
             params = {"temp": settings.INFERENCE_DEFAULT_TEMP}
-            
+
+        # Grammar deprecated — model follows JSON format from system prompt.
+        # To force grammar: pass params["force_grammar"] = True
+        if params.get("force_grammar") and "grammar" not in params:
+            from src.core.tool_manager import tool_manager as _tm  # lazy: only when forced
+            grammar = _tm.generate_gbnf_grammar()
+            if grammar:
+                params["grammar"] = grammar
+                logger.debug("GBNF grammar injected (forced by client)")
+
         log_prefix = f"[Conv: {conversation_id}][Sess: {session_id}]"
         response_buffer = []
         yielded_len = 0

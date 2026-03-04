@@ -201,15 +201,21 @@ class JotaController:
             
             from src.core.tool_manager import tool_manager, ToolPermissionError
             from src.core.config import settings as _settings
+            from src.utils.tool_parser import extract_tool_calls, remove_tool_calls_from_text
             import time as _time
             import json as _json
             tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
 
-            # Base system prompt: controls response style.
-            # Tool instructions (if any) are appended after.
             system_prompt = _settings.AGENT_BASE_SYSTEM_PROMPT
             if tool_instructions:
+                logger.info(f"[TRACE] Tool instructions active ({len(tool_instructions)} chars)")
                 system_prompt += "\n\n" + tool_instructions
+            else:
+                logger.warning("[TRACE] ⚠️  No tools registered — model cannot access external data")
+
+            logger.debug(
+                f"[TRACE] System prompt built — tools={bool(tool_instructions)} total_chars={len(system_prompt)}"
+            )
 
             infer_params = {"system_prompt": system_prompt}
 
@@ -283,9 +289,61 @@ class JotaController:
                         yield {"type": "status", "content": f"Error al ejecutar {tool_name}: {e}"}
                         tool_executed = True
                 else:
-                    # If no tool call has been triggered yet, buffer as "thinking"
                     if not tool_executed:
                         pre_tool_thinking.append(token)
+
+                        # Text-based detection: fallback when inference.py streaming
+                        # parser misses the tag boundaries between chunks.
+                        accumulated = "".join(pre_tool_thinking)
+                        detected_calls = extract_tool_calls(accumulated)
+
+                        if detected_calls:
+                            tool_call_data = detected_calls[0]
+                            tool_name = tool_call_data["name"]
+                            tool_args = tool_call_data["arguments"]
+
+                            clean_thinking = remove_tool_calls_from_text(accumulated)
+                            if clean_thinking.strip():
+                                await self.memory_manager.save_message(
+                                    conversation_id=conversation_id,
+                                    user_id=user_id,
+                                    role="assistant",
+                                    content=clean_thinking,
+                                    client_id=client_id,
+                                    metadata={"model_id": effective_model, "thinking": True},
+                                )
+                            pre_tool_thinking.clear()
+
+                            logger.info(f"[TOOL] Detected from text stream: {tool_name} args={tool_args}")
+                            yield {"type": "status", "content": f"Buscando información usando {tool_name}..."}
+
+                            try:
+                                start_t = _time.time()
+                                result = await tool_manager.execute_tool(tool_name, client_id=client_id, **tool_args)
+                                duration = f"{_time.time() - start_t:.2f}s"
+                                result_str = result if isinstance(result, str) else _json.dumps(result)
+                                await self.memory_manager.save_message(
+                                    conversation_id=conversation_id,
+                                    user_id=user_id,
+                                    role="tool",
+                                    content=result_str,
+                                    client_id=client_id,
+                                    metadata={"tool_name": tool_name, "execution_time": duration},
+                                )
+                                yield {"type": "status", "content": f"Búsqueda completada en {duration}. Generando respuesta..."}
+                                tool_executed = True
+                            except Exception as e:
+                                logger.error(f"Tool execution failed (text detection): {e}")
+                                await self.memory_manager.save_message(
+                                    conversation_id=conversation_id,
+                                    user_id=user_id,
+                                    role="tool",
+                                    content=f"Error executing tool {tool_name}: {e}",
+                                    client_id=client_id,
+                                    metadata={"tool_name": tool_name, "error": True},
+                                )
+                                yield {"type": "status", "content": f"Error al ejecutar {tool_name}: {e}"}
+                                tool_executed = True
                     else:
                         yield token
                     
