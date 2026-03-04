@@ -199,14 +199,24 @@ class JotaController:
             # Usar el modelo activo real (puede haber sido actualizado por _ensure_model_loaded)
             effective_model = self.inference_client.current_engine_model or model_id
             
-            from src.core.tool_manager import tool_manager
+            from src.core.tool_manager import tool_manager, ToolPermissionError
             import time as _time
             import json as _json
-            tool_instructions = tool_manager.get_system_prompt_addition()
-            
-            full_prompt = content
+            tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
+
+            # Base system prompt: controls response style.
+            # Tool instructions (if any) are appended after.
+            base_system = (
+                "You are Jota, a helpful and friendly AI assistant. "
+                "Respond concisely and naturally. Keep answers short — "
+                "use a few sentences unless the user explicitly asks for detail. "
+                "Match the language the user writes in."
+            )
+            system_prompt = base_system
             if tool_instructions:
-                full_prompt = f"[SYSTEM INSTRUCTIONS]\n{tool_instructions}\n[/SYSTEM INSTRUCTIONS]\n\nUser: {content}"
+                system_prompt += "\n\n" + tool_instructions
+
+            infer_params = {"system_prompt": system_prompt}
 
             logger.info(
                 f"[TRACE][Conv: {conversation_id}] Calling infer \u2014 "
@@ -219,10 +229,10 @@ class JotaController:
             
             async for token in self.inference_client.infer(
                 session_id=session_id,
-                prompt=full_prompt,
+                prompt=content,
                 conversation_id=conversation_id,
                 user_id=user_id,
-                params=None,
+                params=infer_params,
                 client_id=client_id,
                 model_id=effective_model,
             ):
@@ -250,7 +260,7 @@ class JotaController:
                     
                     try:
                         start_t = _time.time()
-                        result = await tool_manager.execute_tool(tool_name, **tool_args)
+                        result = await tool_manager.execute_tool(tool_name, client_id=client_id, **tool_args)
                         duration = f"{_time.time() - start_t:.2f}s"
                         
                         result_str = result if isinstance(result, str) else _json.dumps(result)
@@ -298,15 +308,13 @@ class JotaController:
                 await self.inference_client.set_context(session_id, context)
                 
                 followup_prompt = "The tool has provided the results. Please answer the original user query using this information."
-                if tool_instructions:
-                    followup_prompt = f"[SYSTEM INSTRUCTIONS]\n{tool_instructions}\n[/SYSTEM INSTRUCTIONS]\n\n{followup_prompt}"
                     
                 async for token in self.inference_client.infer(
                     session_id=session_id,
                     prompt=followup_prompt,
                     conversation_id=conversation_id,
                     user_id=user_id,
-                    params=None,
+                    params=infer_params,
                     client_id=client_id,
                     model_id=effective_model,
                 ):

@@ -29,7 +29,8 @@ from typing import Dict, AsyncGenerator, Any, Optional, List, Union
 
 from src.core.config import settings
 from src.core.memory import MemoryManager
-from src.core.tool_manager import tool_manager
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +235,7 @@ class InferenceClient:
             self._auth_future.set_result(True)
 
     async def _handle_error(self, data: dict, session_id: str | None) -> None:
-        error_msg = data.get("message", "Unknown error")
+        error_msg = data.get("error") or data.get("message") or "Unknown error"
         logger.error(f"Server Error: {error_msg}")
 
         # Mapear mensajes de error del Engine a excepciones tipadas
@@ -260,7 +261,7 @@ class InferenceClient:
         if session_id and session_id in self._response_queues:
             await self._response_queues[session_id].put(data)
         else:
-            logger.warning(f"Unrouted error: {error_msg} (session_id={session_id!r})")
+            logger.debug(f"Unrouted error (queue already cleaned): {error_msg} (session_id={session_id!r})")
 
     async def _handle_session_created(self, data: dict, session_id: str | None) -> None:
         if self._session_creation_future and not self._session_creation_future.done():
@@ -519,10 +520,6 @@ class InferenceClient:
         if params is None:
             params = {"temp": 0.7}
             
-        grammar = tool_manager.generate_gbnf_grammar()
-        if grammar and "grammar" not in params:
-            params["grammar"] = grammar
-            
         log_prefix = f"[Conv: {conversation_id}][Sess: {session_id}]"
         response_buffer = []
         yielded_len = 0
@@ -583,7 +580,6 @@ class InferenceClient:
                                 yielded_len = end_idx
                                 json_str = tool_call_str[len(tool_call_marker):-len(tool_end_marker)].strip()
                                 try:
-                                    import json
                                     tool_call_data = json.loads(json_str)
                                     yield {"type": "tool_call", "payload": tool_call_data}
                                 except Exception as e:
@@ -610,14 +606,14 @@ class InferenceClient:
                         conversation_id=conversation_id,
                         user_id=user_id,
                         role="assistant",
-                        content=full_response,
+                        content=full_text,
                         client_id=client_id,
                         metadata={"model_id": model_id} if model_id else None,
                     )
                     logger.info(f"{log_prefix} Inference complete (model={model_id!r}).")
                     break
                 elif op == "error":
-                    error_msg = data.get("content")
+                    error_msg = data.get("error") or data.get("message") or data.get("content") or str(data)
                     raise Exception(error_msg)
             
         except Exception as e:

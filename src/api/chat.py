@@ -211,6 +211,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
     await websocket.accept()
     logger.info(f"WebSocket connected for user {user_id}")
+
+    # Fail fast if Engine is not connected
+    if not inference_client.is_connected:
+        logger.error(f"Inference Engine not connected — closing WS for {user_id}")
+        await websocket.send_text(_json.dumps({
+            "type": "error",
+            "message": "Inference Engine no disponible. Intenta de nuevo en unos segundos."
+        }))
+        await websocket.close(code=1011, reason="Inference Engine not connected")
+        return
     
     try:
         # 2. Conversation Management

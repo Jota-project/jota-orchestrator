@@ -7,6 +7,14 @@ from src.api.chat import router as chat_router
 # from src.services.transcription import transcription_client  # Disabled until MQTT is available
 from src.core.services import inference_client, memory_manager, shutdown_services
 
+# Configure root logger so all src.* loggers propagate to the console.
+# Gunicorn only sets up gunicorn.*/uvicorn.* loggers; without this,
+# all application-level logs are silently dropped.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:     %(name)s - %(message)s",
+)
+
 logger = logging.getLogger("uvicorn")
 
 @asynccontextmanager

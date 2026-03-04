@@ -1,19 +1,71 @@
 import inspect
 import json
+import logging
+import os
 from typing import Callable, Dict, Any, List, Optional
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Permission Roles (ordered by privilege level)
+# ---------------------------------------------------------------------------
+ROLE_PUBLIC = "public"    # Any client, including guests
+ROLE_USER = "user"        # Authenticated standard users
+ROLE_ADMIN = "admin"      # Full-privilege administrators
+
+ROLE_HIERARCHY = {ROLE_PUBLIC: 0, ROLE_USER: 1, ROLE_ADMIN: 2}
+
+# Maximum characters a tool result may contain before truncation
+MAX_TOOL_OUTPUT_CHARS = 4000
+
+
+class ToolPermissionError(Exception):
+    """Raised when a client lacks the required role to execute a tool."""
+    pass
+
+
 class ToolManager:
-    """Manages the registration and execution of tools."""
+    """Manages the registration, permission gating, and execution of tools."""
     
-    def __init__(self):
+    def __init__(self, max_output_chars: int = MAX_TOOL_OUTPUT_CHARS):
         self._tools: Dict[str, Callable] = {}
         self._schemas: Dict[str, Dict[str, Any]] = {}
+        self._permissions: Dict[str, str] = {}          # tool_name → required role
+        self._client_roles: Dict[Any, str] = {}         # client_id → assigned role
+        self.max_output_chars = max_output_chars
         
-    def register(self, func: Callable):
-        """Registers a tool function."""
+    # ------------------------------------------------------------------
+    # Client role management
+    # ------------------------------------------------------------------
+    def set_client_role(self, client_id: Any, role: str):
+        """Assigns a permission role to a client_id."""
+        if role not in ROLE_HIERARCHY:
+            raise ValueError(f"Invalid role '{role}'. Must be one of: {list(ROLE_HIERARCHY.keys())}")
+        self._client_roles[client_id] = role
+        
+    def get_client_role(self, client_id: Any) -> str:
+        """Returns the role for a client, defaulting to 'public'."""
+        return self._client_roles.get(client_id, ROLE_PUBLIC)
+        
+    def _check_permission(self, client_id: Any, tool_name: str):
+        """Raises ToolPermissionError if client lacks the required role."""
+        required = self._permissions.get(tool_name, ROLE_PUBLIC)
+        actual = self.get_client_role(client_id)
+        if ROLE_HIERARCHY.get(actual, 0) < ROLE_HIERARCHY.get(required, 0):
+            raise ToolPermissionError(
+                f"Client '{client_id}' (role={actual}) lacks permission for tool "
+                f"'{tool_name}' (requires={required})."
+            )
+    
+    # ------------------------------------------------------------------
+    # Tool registration
+    # ------------------------------------------------------------------
+    def register(self, func: Callable, required_role: str = ROLE_PUBLIC):
+        """Registers a tool function with an optional required permission role."""
         name = func.__name__
         self._tools[name] = func
+        self._permissions[name] = required_role
         
         # Parse docstring for description
         doc = inspect.getdoc(func)
@@ -52,53 +104,154 @@ class ToolManager:
         schema = {
             "name": name,
             "description": description,
-            "parameters": params
+            "parameters": params,
+            "required_role": required_role,
         }
         
         self._schemas[name] = schema
         return func
         
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Returns the JSON schemas for all registered tools."""
-        return list(self._schemas.values())
+    def get_tool_schemas(self, client_id: Any = None) -> List[Dict[str, Any]]:
+        """Returns the JSON schemas for tools accessible to a given client.
         
-    async def execute_tool(self, name: str, **kwargs) -> Any:
-        """Executes a registered tool with the given arguments."""
+        If client_id is None, returns all schemas (for internal use).
+        If client_id is provided, filters by the client's role.
+        """
+        if client_id is None:
+            return list(self._schemas.values())
+            
+        client_role_level = ROLE_HIERARCHY.get(self.get_client_role(client_id), 0)
+        return [
+            s for s in self._schemas.values()
+            if ROLE_HIERARCHY.get(s.get("required_role", ROLE_PUBLIC), 0) <= client_role_level
+        ]
+    
+    # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+    async def execute_tool(self, name: str, client_id: Any = None, **kwargs) -> Any:
+        """Executes a registered tool with permission check and output cap.
+        
+        Args:
+            name: Tool function name.
+            client_id: Caller's client ID for permission validation.
+            **kwargs: Arguments forwarded to the tool function.
+            
+        Raises:
+            ValueError: If the tool is not registered.
+            ToolPermissionError: If the client lacks the required role.
+        """
         if name not in self._tools:
             raise ValueError(f"Tool '{name}' not found.")
             
+        # Permission gate
+        if client_id is not None:
+            self._check_permission(client_id, name)
+        
         func = self._tools[name]
         
-        # Check if it's an async function
+        # Execute
         if inspect.iscoroutinefunction(func):
-            return await func(**kwargs)
+            result = await func(**kwargs)
         else:
-            return func(**kwargs)
+            result = func(**kwargs)
+            
+        # Output size limit — cap to prevent context overflow
+        result_str = result if isinstance(result, str) else json.dumps(result)
+        if len(result_str) > self.max_output_chars:
+            logger.warning(
+                f"Tool '{name}' output truncated: {len(result_str)} → {self.max_output_chars} chars"
+            )
+            result_str = result_str[:self.max_output_chars] + "\n...[OUTPUT TRUNCATED]"
+            return result_str
+            
+        return result
 
-    def get_system_prompt_addition(self) -> str:
-        """Generates a system prompt addition describing the available tools."""
-        if not self._schemas:
+    # ------------------------------------------------------------------
+    # System prompt & grammar generation
+    # ------------------------------------------------------------------
+    def _format_tool_signature(self, schema: dict) -> str:
+        """Format a tool schema as: tool_name(param1: type, param2: type) - description
+
+        Example: "web_search(query: string) - Search the web using DuckDuckGo"
+        """
+        name = schema["name"]
+        description = schema.get("description", "")
+        props = schema.get("parameters", {}).get("properties", {})
+        params_str = ", ".join(
+            f"{p}: {info.get('type', 'string')}"
+            for p, info in props.items()
+        )
+        return f"{name}({params_str}) - {description}"
+
+    def get_system_prompt_addition(self, client_id: Any = None) -> str:
+        """Generates a system prompt describing available tools for this client."""
+        schemas = self.get_tool_schemas(client_id)
+        if not schemas:
             return ""
-            
-        prompt = (
-            "You are a helpful assistant with access to tools. You can answer the user directly, or use a tool to fetch more information.\n"
-            "You have access to the following tools:\n\n"
+
+        tool_list = "\n".join(
+            f"{i + 1}. {self._format_tool_signature(s)}"
+            for i, s in enumerate(schemas)
         )
-        for schema in self.get_tool_schemas():
-            prompt += f"- {schema['name']}: {schema['description']}\n"
-            prompt += f"  Parameters: {json.dumps(schema['parameters'])}\n\n"
-            
-        prompt += (
-            "To use a tool, you MUST output EXACTLY a `<tool_call>` tag containing a JSON object with 'name' and 'arguments' fields. "
-            "For example:\n"
-            "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"param1\": \"value1\"}}</tool_call>\n"
-            "After you use a tool, the system will execute it and provide the result. DO NOT output anything else after the </tool_call> tag. Wait for the result.\n"
+
+        # Use a real tool for Example 2 when available, else fall back to placeholders
+        example_tool = schemas[0]
+        example_name = example_tool["name"]
+        example_props = example_tool.get("parameters", {}).get("properties", {})
+        if example_props:
+            first_param = next(iter(example_props))
+            example_args = json.dumps({first_param: f"<{first_param}_value>"}, indent=2)
+        else:
+            example_args = "{}"
+
+        return (
+            "You are a helpful AI assistant with access to tools for real-time information.\n\n"
+            "AVAILABLE TOOLS:\n"
+            f"{tool_list}\n\n"
+            "HOW TO USE TOOLS:\n"
+            "When you need real-time or external data, output a tool call in this EXACT format:\n\n"
+            "<tool_call>\n"
+            "{\n"
+            '  "name": "tool_name",\n'
+            '  "arguments": {\n'
+            '    "param1": "value1"\n'
+            "  }\n"
+            "}\n"
+            "</tool_call>\n\n"
+            "EXAMPLES:\n\n"
+            "Example 1 - No arguments:\n"
+            "User: What time is it?\n"
+            "Assistant: <tool_call>\n"
+            "{\n"
+            '  "name": "get_current_time",\n'
+            '  "arguments": {}\n'
+            "}\n"
+            "</tool_call>\n\n"
+            "Example 2 - With arguments:\n"
+            "User: Search for Python tutorials\n"
+            "Assistant: <tool_call>\n"
+            "{\n"
+            f'  "name": "{example_name}",\n'
+            f'  "arguments": {example_args}\n'
+            "}\n"
+            "</tool_call>\n\n"
+            "IMPORTANT RULES:\n"
+            "1. Use tools ONLY when you need current/external data\n"
+            "2. Output ONLY the tool call, nothing before or after\n"
+            "3. Wait for the tool result before responding\n"
+            "4. After receiving results, synthesize a natural answer\n"
+            "5. NEVER invent information - use tools if uncertain"
         )
-        return prompt
         
-    def generate_gbnf_grammar(self) -> str:
-        """Generates a strict GBNF grammar string based on the registered tools."""
-        if not self._schemas:
+    def generate_gbnf_grammar(self, client_id: Any = None) -> str:
+        """Generates a strict GBNF grammar string based on the tools available to this client."""
+        # [DEPRECATED] Use system prompt instead. Enable with ENABLE_GBNF_GRAMMAR=true
+        if not os.getenv("ENABLE_GBNF_GRAMMAR", "").lower() == "true":
+            return ""
+
+        schemas = self.get_tool_schemas(client_id)
+        if not schemas:
             return ""
             
         grammar = r'''
@@ -107,10 +260,9 @@ text ::= [^<]+
 tool_call ::= "<tool_call>" ws tool_choice ws "</tool_call>"
 '''
         
-        tools = self.get_tool_schemas()
         tool_choices = []
         
-        for i, schema in enumerate(tools):
+        for i, schema in enumerate(schemas):
             name = schema["name"]
             params = schema["parameters"].get("properties", {})
             
@@ -154,6 +306,22 @@ ws ::= [ \t\n\r]*
 # Global ToolManager instance
 tool_manager = ToolManager()
 
-def tool(func: Callable):
-    """Decorator to register a function as a tool."""
-    return tool_manager.register(func)
+def tool(func: Callable = None, *, required_role: str = ROLE_PUBLIC):
+    """Decorator to register a function as a tool.
+    
+    Usage:
+        @tool                           # public tool (any client)
+        async def search(query: str): ...
+        
+        @tool(required_role="admin")    # admin-only tool
+        async def gpu_stats(): ...
+    """
+    if func is not None:
+        # Called as @tool without arguments
+        return tool_manager.register(func, required_role=ROLE_PUBLIC)
+    
+    # Called as @tool(required_role="admin")
+    def decorator(f: Callable):
+        return tool_manager.register(f, required_role=required_role)
+    return decorator
+
