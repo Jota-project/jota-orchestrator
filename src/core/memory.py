@@ -2,6 +2,7 @@ import httpx
 import logging
 from typing import Optional, Dict, Any, Literal
 from src.core.config import settings
+from src.core.constants import CONTEXT_TRUNCATED_MARKER
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class MemoryManager:
         self.client = httpx.AsyncClient(
             transport=transport, 
             headers=self.base_headers,  # Usar headers base con Bearer
-            timeout=10.0,
+            timeout=settings.JOTA_DB_TIMEOUT,
             verify=settings.SSL_VERIFY  # SSL certificate verification
         )
 
@@ -222,8 +223,8 @@ class MemoryManager:
                 if msg.get("role") == "tool":
                     content = msg.get("content", "")
                     # Cap tool output footprint to ~1500 chars to avoid model distraction and token explosion
-                    if content and len(content) > 1500:
-                        msg["content"] = content[:1500] + "\n...[TRUNCATED TO PREVENT CONTEXT SATURATION]"
+                    if content and len(content) > settings.MEMORY_TOOL_OUTPUT_CAP:
+                        msg["content"] = content[:settings.MEMORY_TOOL_OUTPUT_CAP] + CONTEXT_TRUNCATED_MARKER
                 processed_messages.append(msg)
                 
             # Return up to 'fetch_limit' elements; the downstream model needs the tool traces chronologically

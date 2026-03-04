@@ -5,6 +5,9 @@ import os
 from typing import Callable, Dict, Any, List, Optional
 from pydantic import BaseModel
 
+from src.core.constants import TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_OUTPUT_TRUNCATED_MARKER
+from src.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -16,8 +19,8 @@ ROLE_ADMIN = "admin"      # Full-privilege administrators
 
 ROLE_HIERARCHY = {ROLE_PUBLIC: 0, ROLE_USER: 1, ROLE_ADMIN: 2}
 
-# Maximum characters a tool result may contain before truncation
-MAX_TOOL_OUTPUT_CHARS = 4000
+# Placeholder tool name used in the no-args example inside the system prompt
+_EXAMPLE_NO_ARG_TOOL = "get_current_time"
 
 
 class ToolPermissionError(Exception):
@@ -28,7 +31,7 @@ class ToolPermissionError(Exception):
 class ToolManager:
     """Manages the registration, permission gating, and execution of tools."""
     
-    def __init__(self, max_output_chars: int = MAX_TOOL_OUTPUT_CHARS):
+    def __init__(self, max_output_chars: int = settings.TOOL_MAX_OUTPUT_CHARS):
         self._tools: Dict[str, Callable] = {}
         self._schemas: Dict[str, Dict[str, Any]] = {}
         self._permissions: Dict[str, str] = {}          # tool_name → required role
@@ -162,7 +165,7 @@ class ToolManager:
             logger.warning(
                 f"Tool '{name}' output truncated: {len(result_str)} → {self.max_output_chars} chars"
             )
-            result_str = result_str[:self.max_output_chars] + "\n...[OUTPUT TRUNCATED]"
+            result_str = result_str[:self.max_output_chars] + TOOL_OUTPUT_TRUNCATED_MARKER
             return result_str
             
         return result
@@ -211,31 +214,31 @@ class ToolManager:
             f"{tool_list}\n\n"
             "HOW TO USE TOOLS:\n"
             "When you need real-time or external data, output a tool call in this EXACT format:\n\n"
-            "<tool_call>\n"
+            f"{TOOL_CALL_OPEN}\n"
             "{\n"
             '  "name": "tool_name",\n'
             '  "arguments": {\n'
             '    "param1": "value1"\n'
             "  }\n"
             "}\n"
-            "</tool_call>\n\n"
+            f"{TOOL_CALL_CLOSE}\n\n"
             "EXAMPLES:\n\n"
             "Example 1 - No arguments:\n"
             "User: What time is it?\n"
-            "Assistant: <tool_call>\n"
+            f"Assistant: {TOOL_CALL_OPEN}\n"
             "{\n"
-            '  "name": "get_current_time",\n'
+            f'  "name": "{_EXAMPLE_NO_ARG_TOOL}",\n'
             '  "arguments": {}\n'
             "}\n"
-            "</tool_call>\n\n"
+            f"{TOOL_CALL_CLOSE}\n\n"
             "Example 2 - With arguments:\n"
             "User: Search for Python tutorials\n"
-            "Assistant: <tool_call>\n"
+            f"Assistant: {TOOL_CALL_OPEN}\n"
             "{\n"
             f'  "name": "{example_name}",\n'
             f'  "arguments": {example_args}\n'
             "}\n"
-            "</tool_call>\n\n"
+            f"{TOOL_CALL_CLOSE}\n\n"
             "IMPORTANT RULES:\n"
             "1. Use tools ONLY when you need current/external data\n"
             "2. Output ONLY the tool call, nothing before or after\n"

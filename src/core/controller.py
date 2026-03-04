@@ -200,19 +200,14 @@ class JotaController:
             effective_model = self.inference_client.current_engine_model or model_id
             
             from src.core.tool_manager import tool_manager, ToolPermissionError
+            from src.core.config import settings as _settings
             import time as _time
             import json as _json
             tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
 
             # Base system prompt: controls response style.
             # Tool instructions (if any) are appended after.
-            base_system = (
-                "You are Jota, a helpful and friendly AI assistant. "
-                "Respond concisely and naturally. Keep answers short — "
-                "use a few sentences unless the user explicitly asks for detail. "
-                "Match the language the user writes in."
-            )
-            system_prompt = base_system
+            system_prompt = _settings.AGENT_BASE_SYSTEM_PROMPT
             if tool_instructions:
                 system_prompt += "\n\n" + tool_instructions
 
@@ -307,7 +302,7 @@ class JotaController:
                 context = await self.memory_manager.get_conversation_messages(conversation_id, client_id)
                 await self.inference_client.set_context(session_id, context)
                 
-                followup_prompt = "The tool has provided the results. Please answer the original user query using this information."
+                followup_prompt = _settings.TOOL_FOLLOWUP_PROMPT
                     
                 async for token in self.inference_client.infer(
                     session_id=session_id,

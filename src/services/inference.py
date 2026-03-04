@@ -28,6 +28,7 @@ import ssl
 from typing import Dict, AsyncGenerator, Any, Optional, List, Union
 
 from src.core.config import settings
+from src.core.constants import TOOL_CALL_OPEN, TOOL_CALL_CLOSE, INTERRUPTED_MARKER
 from src.core.memory import MemoryManager
 
 
@@ -83,7 +84,7 @@ class InferenceClient:
         # Caché de la lista de modelos disponibles
         self._models_cache: Optional[List] = None
         self._models_cache_expires: float = 0.0   # tiempo monotonic de expiración
-        self._models_cache_ttl: float = 300.0     # TTL en segundos (5 minutos)
+        self._models_cache_ttl: float = settings.MODELS_CACHE_TTL
 
         # Background tasks
         self._connection_task = None
@@ -348,7 +349,7 @@ class InferenceClient:
              self._session_creation_future = asyncio.Future()
              try:
                  await self.websocket.send(json.dumps({"op": "create_session"}))
-                 return await asyncio.wait_for(self._session_creation_future, timeout=5.0)
+                 return await asyncio.wait_for(self._session_creation_future, timeout=settings.INFERENCE_SESSION_TIMEOUT)
              finally:
                  self._session_creation_future = None
 
@@ -442,7 +443,7 @@ class InferenceClient:
         self._pending_commands["list_models"] = future
 
         await self.websocket.send(json.dumps({"op": "COMMAND_LIST_MODELS"}))
-        result = await asyncio.wait_for(future, timeout=10.0)
+        result = await asyncio.wait_for(future, timeout=settings.INFERENCE_LIST_MODELS_TIMEOUT)
 
         # Actualizar caché
         models = result.get("models", result)  # compatibilidad con distintos formatos
@@ -478,7 +479,7 @@ class InferenceClient:
                 "model_id": model_id
             }))
 
-            result = await asyncio.wait_for(future, timeout=30.0)
+            result = await asyncio.wait_for(future, timeout=settings.INFERENCE_LOAD_MODEL_TIMEOUT)
             logger.info(f"[TRACE] LOAD_MODEL_RESULT from engine \u2014 raw={result!r}")
             success = result.get("status") == "SUCCESS"
             if success:
@@ -518,7 +519,7 @@ class InferenceClient:
             Exception: Si el engine no está disponible o se excede el timeout (30s/token).
         """
         if params is None:
-            params = {"temp": 0.7}
+            params = {"temp": settings.INFERENCE_DEFAULT_TEMP}
             
         log_prefix = f"[Conv: {conversation_id}][Sess: {session_id}]"
         response_buffer = []
@@ -546,7 +547,7 @@ class InferenceClient:
             
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=30.0) 
+                    data = await asyncio.wait_for(queue.get(), timeout=settings.INFERENCE_TOKEN_TIMEOUT)
                 except asyncio.TimeoutError:
                     raise Exception("Inference timed out waiting for token")
 
@@ -560,25 +561,22 @@ class InferenceClient:
                     response_buffer.append(content)
                     full_text = "".join(response_buffer)
                     
-                    tool_call_marker = "<tool_call>"
-                    tool_end_marker = "</tool_call>"
-                    
-                    if tool_call_marker in full_text:
-                        start_idx = full_text.find(tool_call_marker)
+                    if TOOL_CALL_OPEN in full_text:
+                        start_idx = full_text.find(TOOL_CALL_OPEN)
                         if start_idx > yielded_len:
                             chunk = full_text[yielded_len:start_idx]
                             yielded_len += len(chunk)
                             yield chunk
-                            
+
                         # Check if closed
-                        if tool_end_marker in full_text[start_idx:]:
-                            end_idx = full_text.find(tool_end_marker, start_idx) + len(tool_end_marker)
+                        if TOOL_CALL_CLOSE in full_text[start_idx:]:
+                            end_idx = full_text.find(TOOL_CALL_CLOSE, start_idx) + len(TOOL_CALL_CLOSE)
                             tool_call_str = full_text[start_idx:end_idx]
-                            
+
                             # Only parse if we haven't yielded this tool call yet
                             if end_idx > yielded_len:
                                 yielded_len = end_idx
-                                json_str = tool_call_str[len(tool_call_marker):-len(tool_end_marker)].strip()
+                                json_str = tool_call_str[len(TOOL_CALL_OPEN):-len(TOOL_CALL_CLOSE)].strip()
                                 try:
                                     tool_call_data = json.loads(json_str)
                                     yield {"type": "tool_call", "payload": tool_call_data}
@@ -588,8 +586,8 @@ class InferenceClient:
                     else:
                         safe_to_yield = full_text
                         last_lt = full_text.rfind("<")
-                        if last_lt != -1 and last_lt >= len(full_text) - len(tool_call_marker):
-                            if tool_call_marker.startswith(full_text[last_lt:]):
+                        if last_lt != -1 and last_lt >= len(full_text) - len(TOOL_CALL_OPEN):
+                            if TOOL_CALL_OPEN.startswith(full_text[last_lt:]):
                                 safe_to_yield = full_text[:last_lt]
                                 
                         if len(safe_to_yield) > yielded_len:
@@ -621,7 +619,7 @@ class InferenceClient:
             
             if response_buffer:
                 logger.info(f"{log_prefix} Saving interrupted response.")
-                partial_response = "".join(response_buffer) + " [INTERRUPTED]"
+                partial_response = "".join(response_buffer) + INTERRUPTED_MARKER
                 await self.memory_manager.save_message(
                     conversation_id=conversation_id,
                     user_id=user_id,

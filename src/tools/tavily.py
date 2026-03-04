@@ -17,8 +17,8 @@ async def web_search(query: str) -> List[Dict[str, Any]]:
     try:
         response = await client.search(
             query=query,
-            search_depth="basic",
-            max_results=5
+            search_depth=settings.TAVILY_SEARCH_DEPTH,
+            max_results=settings.TAVILY_MAX_RESULTS,
         )
         
         # Extract and return the results

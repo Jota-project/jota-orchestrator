@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         await inference_client.connect()
         
         # Esperar a que se autentique (con timeout)
-        inference_connected = await inference_client.verify_connection(timeout=10.0)
+        inference_connected = await inference_client.verify_connection()
         
         if inference_connected:
             logger.info("✅ Inference Engine: CONECTADO y AUTENTICADO correctamente")

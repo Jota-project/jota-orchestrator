@@ -2,10 +2,12 @@ import re
 import json
 import logging
 
+from src.core.constants import TOOL_CALL_OPEN, TOOL_CALL_CLOSE
+
 logger = logging.getLogger(__name__)
 
 TOOL_CALL_PATTERN = re.compile(
-    r'<tool_call>\s*(\{.*?\})\s*</tool_call>',
+    re.escape(TOOL_CALL_OPEN) + r'\s*(\{.*?\})\s*' + re.escape(TOOL_CALL_CLOSE),
     re.DOTALL
 )
 
