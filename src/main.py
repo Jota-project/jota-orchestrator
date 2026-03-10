@@ -6,7 +6,8 @@ from src.core.config import settings
 from src.api.chat import router as chat_router
 from src.api.quick import router as quick_router
 # from src.services.transcription import transcription_client  # Disabled until MQTT is available
-from src.core.services import inference_client, memory_manager, mqtt_service, shutdown_services
+from src.core.services import inference_client, memory_manager, shutdown_services
+# from src.services.mqtt import mqtt_service # Disabled
 
 # Configure root logger so all src.* loggers propagate to the console.
 # Gunicorn only sets up gunicorn.*/uvicorn.* loggers; without this,
