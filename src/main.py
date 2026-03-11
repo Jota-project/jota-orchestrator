@@ -5,6 +5,7 @@ import logging
 from src.core.config import settings
 from src.api.chat import router as chat_router
 from src.api.quick import router as quick_router
+from src.api.rest import router as rest_router
 # from src.services.transcription import transcription_client  # Disabled until MQTT is available
 from src.core.services import inference_client, memory_manager, shutdown_services
 # from src.services.mqtt import mqtt_service # Disabled
@@ -108,8 +109,10 @@ app.add_middleware(
 # Route layout:
 #   /api/chat  → WebSocket only  (ws://host/api/chat/ws/{user_id})
 #   /api/quick → HTTP NDJSON     (POST http://host/api/quick)
+#   /api/*     → REST data & config (models, conversations, settings…)
 app.include_router(chat_router, prefix="/api")
 app.include_router(quick_router, prefix="/api")
+app.include_router(rest_router, prefix="/api")
 
 
 @app.get("/")
