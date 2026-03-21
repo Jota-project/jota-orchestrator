@@ -34,6 +34,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests
+        env:
+          TRANSCRIPTION_SERVICE_URL: "ws://localhost:8765"
+          INFERENCE_SERVICE_URL: "ws://localhost:8766"
+          ORCHESTRATOR_ID: "ci-orchestrator"
+          ORCHESTRATOR_API_KEY: "ci-key"
+          JOTA_DB_URL: "http://localhost:9000"
+          JOTA_DB_SK: "ci-db-key"
         run: pytest tests/unit/ tests/integration/ -v
 
   docker-build:
