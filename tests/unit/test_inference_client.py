@@ -2,115 +2,114 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.services.inference import InferenceClient
+from src.core.config import settings
 import json
-import websockets
 
 @pytest.mark.asyncio
 async def test_inference_client_initialization(inference_config):
     """Test that the client initializes with provided config."""
     client = InferenceClient(**inference_config)
-    
+
     assert client.url == inference_config["url"]
-    assert client.client_id == inference_config["client_id"]
-    assert client.api_key == inference_config["api_key"]
+    assert client.client_id == settings.ORCHESTRATOR_ID
+    assert client.api_key == settings.ORCHESTRATOR_API_KEY
     assert client.websocket is None
     assert client.active_sessions == {}
 
 @pytest.mark.asyncio
-async def test_inference_client_defaults(mock_settings, mock_memory_manager):
-    """Test that the client initializes with default settings."""
-    # We need to make sure settings are mocked if we rely on them
-    # But here we are passing explicit None to trigger defaults from settings
-    # However, since we import settings at module level in source, 
-    # we might need to mock src.core.config.settings instead of env vars if they are already loaded.
-    
-    # Actually, the refactor uses `url or settings.URL`. 
-    # If settings was imported before monkeypatch, it might have old values.
-    # But let's assume standard behavior.
-    
-    with patch("src.services.inference.settings") as mock_conf:
+async def test_inference_client_defaults(mock_memory_manager):
+    """Test that the client uses settings when no URL is provided."""
+    with patch("src.services.inference.client.settings") as mock_conf:
         mock_conf.INFERENCE_SERVICE_URL = "ws://default"
-        mock_conf.INFERENCE_CLIENT_ID = "default_id"
-        mock_conf.INFERENCE_API_KEY = "default_key"
-        
+        mock_conf.ORCHESTRATOR_ID = "default_id"
+        mock_conf.ORCHESTRATOR_API_KEY = "default_key"
+        mock_conf.MODELS_CACHE_TTL = 300.0
+
         client = InferenceClient(memory_manager=mock_memory_manager)
         assert client.url == "ws://default"
         assert client.client_id == "default_id"
 
 @pytest.mark.asyncio
-async def test_connect_success(inference_config):
-    """Test successful connection and authentication."""
+async def test_connect_starts_background_task(inference_config):
+    """Test that connect() starts the background connection loop task."""
     client = InferenceClient(**inference_config)
-    
-    with patch("src.services.inference.websockets.connect", new_callable=AsyncMock) as mock_connect:
-        mock_ws = AsyncMock()
-        mock_ws.open = True
-        mock_connect.return_value = mock_ws
-        
+    assert client._connection_task is None
+
+    with patch.object(client, '_connection_loop', new_callable=AsyncMock):
         await client.connect()
-        
-        mock_connect.assert_called_once_with(inference_config["url"])
-        assert client.websocket is not None
-        
-        # Verify auth message
-        expected_auth = {
-            "op": "auth",
-            "client_id": inference_config["client_id"],
-            "api_key": inference_config["api_key"]
-        }
-        mock_ws.send.assert_called_once()
-        sent_msg = json.loads(mock_ws.send.call_args[0][0])
-        assert sent_msg == expected_auth
+        assert client._connection_task is not None
+
+    await client.invoke_shutdown()
 
 @pytest.mark.asyncio
-async def test_connect_failure(inference_config):
-    """Test connection failure handling."""
+async def test_connect_idempotent(inference_config):
+    """Test that calling connect() twice does not start a second task."""
     client = InferenceClient(**inference_config)
-    
-    with patch("src.services.inference.websockets.connect", side_effect=ConnectionRefusedError("Connection refused")):
-        with pytest.raises(ConnectionRefusedError):
-            await client.connect()
-        
-        assert client.websocket is None
+
+    with patch.object(client, '_connection_loop', new_callable=AsyncMock):
+        await client.connect()
+        task_after_first = client._connection_task
+
+        await client.connect()
+        assert client._connection_task is task_after_first
+
+    await client.invoke_shutdown()
 
 @pytest.mark.asyncio
-async def test_get_session_creates_new(inference_config):
-    """Test creating a new session."""
+async def test_is_connected_false_when_no_websocket(inference_config):
+    """Test is_connected returns False when websocket is None."""
+    client = InferenceClient(**inference_config)
+    assert not client.is_connected
+
+@pytest.mark.asyncio
+async def test_create_session(inference_config):
+    """Test that create_session sends the correct op and returns the session_id."""
     client = InferenceClient(**inference_config)
     client.websocket = AsyncMock()
     client.websocket.open = True
-    
-    # Mock the future to return a session_id immediately (simulating response)
-    # But get_session waits for a future that is set by _read_loop.
-    # So we need to simulate _read_loop or mock the wait mechanism.
-    
-    # Since we can't easily run the background task and the main task in lockstep in a simple unit test without a real loop,
-    # we can mock asyncio.wait_for or the future itself if possible.
-    
-    # A better approach for unit testing get_session logic:
-    # We can mock asyncio.wait_for to return "session_123" directly.
-    
+
     with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
         mock_wait.return_value = "session_123"
-        
-        session_id = await client.get_session("user_1")
-        
+
+        session_id = await client.create_session()
+
         assert session_id == "session_123"
-        assert client.active_sessions["user_1"] == "session_123"
-        
-        # Verify "create_session" op was sent
-        sent_args = client.websocket.send.call_args_list
-        # Triggered connect checks? No providing open websocket.
-        # It should send 'create_session'
-        assert len(sent_args) > 0
-        last_msg = json.loads(sent_args[-1][0][0])
-        assert last_msg["op"] == "create_session"
+        sent_msg = json.loads(client.websocket.send.call_args[0][0])
+        assert sent_msg["op"] == "create_session"
 
 @pytest.mark.asyncio
-async def test_get_session_existing(inference_config):
-    """Test retrieving an existing session."""
+async def test_ensure_session_tracks_user(inference_config):
+    """Test that ensure_session records the session under the user_id."""
     client = InferenceClient(**inference_config)
-    client.active_sessions["user_1"] = "existing_session"
-    
-    session_id = await client.get_session("user_1")
-    assert session_id == "existing_session"
+    client.websocket = AsyncMock()
+    client.websocket.open = True
+
+    with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
+        mock_wait.return_value = "session_456"
+
+        session_id = await client.ensure_session("user_1")
+
+        assert session_id == "session_456"
+        assert client._user_sessions["user_1"] == "session_456"
+
+@pytest.mark.asyncio
+async def test_ensure_session_closes_previous(inference_config):
+    """Test that ensure_session closes the existing session before creating a new one."""
+    client = InferenceClient(**inference_config)
+    client.websocket = AsyncMock()
+    client.websocket.open = True
+    client._user_sessions["user_1"] = "old_session"
+
+    with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
+        mock_wait.return_value = "new_session"
+
+        session_id = await client.ensure_session("user_1")
+
+        assert session_id == "new_session"
+        assert client._user_sessions["user_1"] == "new_session"
+
+        # close_session op should have been sent for the old session
+        sent_msgs = [json.loads(call[0][0]) for call in client.websocket.send.call_args_list]
+        close_msgs = [m for m in sent_msgs if m.get("op") == "close_session"]
+        assert len(close_msgs) == 1
+        assert close_msgs[0]["session_id"] == "old_session"

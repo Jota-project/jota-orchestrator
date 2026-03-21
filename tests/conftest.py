@@ -28,7 +28,5 @@ def mock_memory_manager():
 def inference_config(mock_memory_manager):
     return {
         "url": "ws://test-server",
-        "client_id": "unit-test-client",
-        "api_key": "unit-test-key",
         "memory_manager": mock_memory_manager
     }
