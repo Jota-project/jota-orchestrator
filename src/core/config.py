@@ -56,26 +56,6 @@ class Settings(BaseSettings):
     ENABLE_GBNF_GRAMMAR: bool = False         # Deprecated: Use system prompt instead
 
     # ---------------------------------------------------------------------------
-    # MQTT Integration
-    # ---------------------------------------------------------------------------
-    MQTT_ENABLED: bool = False
-    MQTT_BROKER_HOST: str = "localhost"
-    MQTT_BROKER_PORT: int = 1883
-    MQTT_USERNAME: Optional[str] = None
-    MQTT_PASSWORD: Optional[str] = None
-    MQTT_CLIENT_ID: str = "jota-orchestrator"
-    MQTT_KEEPALIVE: int = 60
-    MQTT_QOS: int = 1
-    MQTT_SUBSCRIBE_TOPIC: str = "jota/stt"
-    MQTT_RESPONSE_TOPIC_PREFIX: str = "jota/response"
-    MQTT_CLIENT_SYSTEM_PROMPT: str = (
-        "You are Jota, a voice command assistant. "
-        "Respond ONLY with 1-2 short phrases. "
-        "No explanations, no pleasantries — just the direct result or answer. "
-        "Match the language the user writes in."
-    )
-
-    # ---------------------------------------------------------------------------
     # JotaDB Integration
     # ---------------------------------------------------------------------------
     JOTA_DB_URL: str
