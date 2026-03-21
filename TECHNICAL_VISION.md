@@ -148,7 +148,6 @@ src/utils/tool_parser.py  ← Utilidades de parseo reutilizables
 ### Fase 3: Interfaz y Observabilidad
 * [ ] Web Dashboard para control y métricas.
 * [ ] Soporte multi-tool por inferencia (actualmente se procesa el primero detectado).
-* [ ] Habilitar transcripción de audio vía MQTT.
 
 ---
 

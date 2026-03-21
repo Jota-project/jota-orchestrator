@@ -646,8 +646,5 @@ El `model_id` en `POST /chat` y en la apertura del WebSocket indica al Orchestra
 - Hay una inferencia en progreso (`InferenceEngineBusyError` → `503`).
 - El modelo no existe en el Engine (`ModelNotFoundError` → `404`).
 
-### Transcripción de audio
-El servicio de transcripción vía MQTT está **deshabilitado** en la versión actual. Se habilitará en una release futura cuando la integración MQTT esté lista.
-
 ### Prefijo de versión de API
 Actualmente los endpoints están en la raíz (`/chat/...`). Está previsto migrar a `/api/v1/chat/...` en futuras versiones. La línea correspondiente en `main.py` está comentada para facilitar la transición.

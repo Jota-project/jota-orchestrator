@@ -6,9 +6,7 @@ from src.core.config import settings
 from src.api.chat import router as chat_router
 from src.api.quick import router as quick_router
 from src.api.rest import router as rest_router
-# from src.services.transcription import transcription_client  # Disabled until MQTT is available
 from src.core.services import inference_client, memory_manager, shutdown_services
-# from src.services.mqtt import mqtt_service # Disabled
 
 # Configure root logger so all src.* loggers propagate to the console.
 # Gunicorn only sets up gunicorn.*/uvicorn.* loggers; without this,
@@ -26,9 +24,6 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("🚀 INICIANDO JOTA ORCHESTRATOR")
     logger.info("=" * 60)
-    
-    # Transcription Service - Disabled until MQTT integration is ready
-    # task_transcription = asyncio.create_task(transcription_client.connect_and_listen())
     
     # 1. Verify JotaDB Connection with Authentication
     logger.info("📊 Verificando conexión con JotaDB...")
@@ -65,15 +60,6 @@ async def lifespan(app: FastAPI):
     
     logger.info("")  # Línea en blanco
 
-    # 3. Connect to MQTT broker (if enabled)
-    if settings.MQTT_ENABLED:
-        logger.info("📡 Conectando con broker MQTT...")
-        logger.info(f"   └─ Broker: {settings.MQTT_BROKER_HOST}:{settings.MQTT_BROKER_PORT}")
-        logger.info(f"   └─ Topic:  {settings.MQTT_SUBSCRIBE_TOPIC}")
-        await mqtt_service.connect()
-        logger.info("✅ MQTT: Suscrito y escuchando")
-        logger.info("")  # Línea en blanco
-
     logger.info("=" * 60)
     logger.info("✨ JotaOrchestrator listo para recibir peticiones")
     logger.info("=" * 60)
@@ -84,8 +70,6 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Cerrando servicios...")
     await shutdown_services()
     logger.info("👋 JotaOrchestrator detenido")
-    
-    # await task_transcription  # Disabled until MQTT is available
 
 from fastapi.middleware.cors import CORSMiddleware
 
