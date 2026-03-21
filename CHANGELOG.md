@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.0...v1.0.1) (2026-03-21)
+
+
+### Bug Fixes
+
+* **tests:** update unit and integration tests to match refactored InferenceClient API ([6fa0429](https://github.com/Jota-project/jota-orchestrator/commit/6fa04298b31992d8855eb79b93133028e917b33a))
+
 # 1.0.0 (2026-03-21)
 
 
