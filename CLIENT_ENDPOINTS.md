@@ -1,156 +1,63 @@
 # JotaOrchestrator — Documentación de Endpoints para Clientes
 
-
 ## Tabla de Contenidos
 
-1. [Autenticación y Credenciales](#autenticación-y-credenciales)
-2. [Flujo General de Uso](#flujo-general-de-uso)  
-3. [Endpoints de Sistema](#endpoints-de-sistema)  
-   - `GET /` — Raíz  
-   - `GET /health` — Health Check  
-4. [Endpoints de Modelos](#endpoints-de-modelos)  
-   - `GET /chat/models` — Listar modelos *(nuevo)*  
-5. [Endpoints de Conversaciones](#endpoints-de-conversaciones)  
-   - `GET /chat/conversations/{user_id}` — Listar conversaciones  
-   - `GET /chat/conversations/{user_id}/{conversation_id}/messages` — Mensajes de conversación  
-   - `PATCH /chat/conversations/{conversation_id}` — Cambiar modelo de conversación *(nuevo)*  
-6. [Endpoints de Chat](#endpoints-de-chat)  
-   - `POST /chat` — Chat REST (sin streaming)  
-   - `WebSocket /ws/chat/{user_id}` — Chat en tiempo real (streaming)  
-7. [Códigos de Error y Respuestas de Error](#códigos-de-error-y-respuestas-de-error)
-8. [Notas de Implementación y Limitaciones](#notas-de-implementación-y-limitaciones)
+1. [Autenticación y Tipos de Cliente](#autenticación-y-tipos-de-cliente)
+2. [Mapa de Endpoints](#mapa-de-endpoints)
+3. [Endpoints de Sistema](#endpoints-de-sistema)
+   - `GET /` — Raíz
+   - `GET /health` — Health Check
+4. [Endpoints de Datos (`/api`)](#endpoints-de-datos-api)
+   - `GET /api/models` — Listar modelos
+   - `GET /api/conversations/{user_id}` — Listar conversaciones
+   - `GET /api/conversations/{user_id}/{conversation_id}/messages` — Mensajes
+   - `PATCH /api/conversations/{conversation_id}/model` — Cambiar modelo
+5. [Endpoint QUICK (`/api/quick`)](#endpoint-quick-apiquick)
+   - `POST /api/quick` — Comando rápido con streaming NDJSON
+6. [Endpoint CHAT (`/api/chat`)](#endpoint-chat-apichat)
+   - `WebSocket /api/chat/ws/{user_id}` — Chat en tiempo real
+7. [Códigos de Error](#códigos-de-error)
 
 ---
 
-## Autenticación y Credenciales
+## Autenticación y Tipos de Cliente
 
-Todos los endpoints (excepto `/` y `/health`) requieren autenticación como **cliente externo**.  
-JotaOrchestrator distingue dos tipos de credenciales:
+Todos los endpoints (excepto `/` y `/health`) requieren autenticación mediante `x-client-key`.
 
-| Tipo | Quién la usa | Mecanismo |
-|------|-------------|-----------|
-| **Client Key** (`x-client-key`) | Aplicaciones cliente externas | Header HTTP / Query param WebSocket |
-| **Orchestrator Key** (`ORCHESTRATOR_ID` + `ORCHESTRATOR_API_KEY`) | Comunicación interna Orchestrator ↔ InferenceEngine | Headers WebSocket internos — **nunca expuesta al cliente** |
+### Tipos de cliente
 
-### Client Key
+JotaOrchestrator distingue dos tipos de clientes. El tipo se configura en JotaDB al crear el cliente y se valida en cada petición:
 
-- **Header:** `x-client-key: <tu_clave_de_cliente>`
-- **Para WebSocket:** puede pasarse como query param `?x_client_key=<clave>` o `?client_key=<clave>` (para clientes que no soporten cabeceras personalizadas en la apertura del WebSocket).
-- La clave se valida contra JotaDB en cada petición. Si es inválida o falta → `401 Unauthorized`.
-- La validación devuelve internamente el `client_id` numérico, que se usa para aislar los datos de cada cliente (las conversaciones y mensajes pertenecen al `client_id`, no solo al `user_id`).
+| `client_type` | Endpoints permitidos | Caso de uso |
+|---------------|---------------------|-------------|
+| `chat` | `/api/chat/ws/...` + todos los de `/api/` | Aplicaciones de conversación, interfaces web |
+| `quick` | `/api/quick` + todos los de `/api/` | Agentes de voz, domótica, comandos rápidos |
 
-### Variables de Entorno del Servidor
+### Mecanismo de autenticación
 
-El archivo `.env` del Orchestrator debe contener:
+- **Header HTTP:** `x-client-key: <tu_clave_de_cliente>`
+- **Query param WebSocket:** `?x_client_key=<clave>` o `?client_key=<clave>` (para clientes que no soporten cabeceras personalizadas al abrir el WebSocket)
+- La clave se valida en JotaDB en cada petición. Si es inválida o falta → `401 Unauthorized`.
+- La validación devuelve internamente el `client_id` numérico, que aísla los datos de cada cliente (las conversaciones y mensajes pertenecen al `client_id`, no solo al `user_id`).
 
-```env
-# Obligatorias
-ORCHESTRATOR_ID=<id_interno_del_orchestrator>
-ORCHESTRATOR_API_KEY=<clave_interna>
-JOTA_DB_URL=https://...
-JOTA_DB_SK=<server_key_para_jotadb>
-INFERENCE_SERVICE_URL=ws(s)://...
-
-# Herramientas
-TAVILY_API_KEY=<tu_clave_tavily>     # Opcional. Sin ella, web_search lanza error al invocarse
-TAVILY_SEARCH_DEPTH=basic            # "basic" | "advanced"
-TAVILY_MAX_RESULTS=5
-
-# Comportamiento (con defaults razonables, normalmente no hay que tocarlos)
-INFERENCE_DEFAULT_TEMP=0.7
-INFERENCE_TOKEN_TIMEOUT=30.0         # segundos esperando el siguiente token
-INFERENCE_LOAD_MODEL_TIMEOUT=30.0
-INFERENCE_LIST_MODELS_TIMEOUT=10.0
-INFERENCE_SESSION_TIMEOUT=5.0
-MODELS_CACHE_TTL=300.0               # segundos que se cachea la lista de modelos
-TOOL_MAX_OUTPUT_CHARS=4000           # truncación de output de herramientas
-MEMORY_TOOL_OUTPUT_CAP=1500          # truncación al inyectar en contexto
-JOTA_DB_TIMEOUT=10.0
-
-SSL_VERIFY=true                      # false para certificados auto-firmados en desarrollo
-ENABLE_GBNF_GRAMMAR=false            # Deprecated. true solo para compatibilidad legacy
-```
-
-> ⚠️ El cliente **nunca** debe conocer `ORCHESTRATOR_API_KEY` ni `JOTA_DB_SK`. Éstas son credenciales de servicio interno.
+> ⚠️ Las credenciales `ORCHESTRATOR_API_KEY` y `JOTA_DB_SK` son internas del servidor. El cliente nunca debe conocerlas.
 
 ---
 
-## Flujo General de Uso
-
-### Flujo WebSocket (recomendado — streaming)
+## Mapa de Endpoints
 
 ```
-Cliente                       JotaOrchestrator              JotaDB           InferenceEngine
-  │                                   │                        │                    │
-  │── WS /ws/chat/{user_id}          │                        │                    │
-  │   ?conversation_id=<id>          │                        │                    │
-  │   ?model_id=<model>              │                        │                    │
-  │   Header: x-client-key=<key>     │                        │                    │
-  │──────────────────────────────────>│                        │                    │
-  │                                   │── validate_client_key ──>│                  │
-  │                                   │<── {id: client_id} ─────│                  │
-  │                                   │── create_conversation ──>│                  │  (si no hay conversation_id)
-  │                                   │<── {id: conv_id} ───────│                  │
-  │                                   │── ensure_session ────────────────────────────>│
-  │                                   │<── session_id ───────────────────────────────│
-  │                                   │── get_messages (contexto) ──>│              │
-  │                                   │── set_context ───────────────────────────────>│
-  │<── WS accept ─────────────────────│                        │                    │
-  │                                   │                        │                    │
-  │── "Hola, ¿cómo estás?" ──────────>│                        │                    │
-  │                                   │── save_message(user) ───>│                  │
-  │                                   │── infer(prompt) ─────────────────────────────>│
-  │<── "Hola! Estoy" ─────────────────│<── token ────────────────────────────────────│
-  │<── " bien, gracias." ─────────────│<── token ────────────────────────────────────│
-  │<── [fin]  ────────────────────────│<── end ─────────────────────────────────────│
-  │                                   │── save_message(assistant)──>│               │
-  │                                   │                        │                    │
-  │── [desconecta] ──────────────────>│                        │                    │
-  │                                   │── release_session ───────────────────────────>│
-```
+GET  /                                              — Liveness check (sin auth)
+GET  /health                                        — Health check profundo (sin auth)
 
-### Flujo REST (sin streaming)
+GET  /api/models                                    — Lista modelos del Engine
+GET  /api/conversations/{user_id}                   — Lista conversaciones
+GET  /api/conversations/{user_id}/{conv_id}/messages — Historial de mensajes
+PATCH /api/conversations/{conv_id}/model            — Cambia modelo de conversación
 
-```
-Cliente                       JotaOrchestrator              JotaDB           InferenceEngine
-  │                                   │                        │                    │
-  │── POST /chat ────────────────────>│                        │                    │
-  │   Header: x-client-key            │                        │                    │
-  │   Body: {text, user_id, model_id} │                        │                    │
-  │                                   │── validate_client_key ──>│                  │
-  │                                   │── create_conversation ──>│                  │
-  │                                   │── ensure_session ────────────────────────────>│
-  │                                   │── set_context ───────────────────────────────>│
-  │                                   │── save_message(user) ───>│                  │
-  │                                   │── infer (streaming interno) ─────────────────>│
-  │                                   │                        │                    │
-  │                                   │   [Si detecta <tool_call>]                   │
-  │                                   │── execute_tool (Tavily/MCP) ──────────────>  │
-  │                                   │── save_message(tool) ───>│                  │
-  │                                   │── RE-INFER (contexto actualizado) ───────────>│
-  │                                   │                        │                    │
-  │                                   │◄─ tokens ... end ───────────────────────────│
-  │                                   │── save_message(assistant)──>│               │
-  │                                   │── release_session ───────────────────────────>│
-  │<── {status, response: "..."} ─────│                        │                    │
-```
+POST /api/quick                                     — Comando rápido NDJSON (client_type: quick)
 
-### Flujo de gestión de modelo
-
-```
-Cliente                       JotaOrchestrator              JotaDB           InferenceEngine
-  │                                   │                        │                    │
-  │── GET /chat/models ──────────────>│                        │                    │
-  │   Header: x-client-key            │                        │                    │
-  │                                   │── COMMAND_LIST_MODELS ────────────────────── >│
-  │                                   │<── list_models_result (con caché TTL 5min) ──│
-  │<── {models: [...]} ───────────────│                        │                    │
-  │                                   │                        │                    │
-  │── PATCH /chat/conversations/{id} >│                        │                    │
-  │   Body: {model_id: "llama-3"}     │                        │                    │
-  │                                   │── list_models (caché) ──────────────────────>│
-  │                                   │── set_conversation_model ──>│               │
-  │<── {status, model_id} ────────────│                        │                    │
+WS   /api/chat/ws/{user_id}                         — Chat en tiempo real (client_type: chat)
 ```
 
 ---
@@ -159,7 +66,7 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 
 ### `GET /`
 
-**Descripción:** Endpoint raíz de comprobación de vida (liveness, no readiness).  
+**Descripción:** Liveness check. No verifica conectividad interna.
 **Autenticación:** Ninguna.
 
 **Respuesta `200 OK`:**
@@ -175,10 +82,10 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 
 ### `GET /health`
 
-**Descripción:** Health Check profundo. Comprueba la conectividad con JotaDB y el InferenceEngine. Útil para balanceadores de carga y monitorización.  
+**Descripción:** Health check profundo. Comprueba la conectividad con JotaDB y el InferenceEngine.
 **Autenticación:** Ninguna.
 
-**Respuesta `200 OK` (todos los componentes sanos):**
+**Respuesta `200 OK`:**
 ```json
 {
   "status": "ok",
@@ -189,7 +96,7 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 }
 ```
 
-**Respuesta `503 Service Unavailable` (algún componente caído):**
+**Respuesta `503 Service Unavailable`:**
 ```json
 {
   "status": "degraded",
@@ -200,21 +107,20 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 }
 ```
 
-> **Nota:** El estado del `inference_engine` refleja si el WebSocket persistente interno está en `OPEN`. No implica que el motor esté disponible para inferencia (puede estar cargando un modelo).
-
 ---
 
-## Endpoints de Modelos
+## Endpoints de Datos (`/api`)
 
-### `GET /chat/models` *(nuevo)*
+Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-client-key`.
 
-**Descripción:** Devuelve la lista de modelos AI disponibles en el InferenceCenter. La respuesta se cachea en memoria durante **5 minutos** para evitar sobrecargar el bus de mensajes WebSocket interno.  
-**Autenticación:** `x-client-key` requerido.
+### `GET /api/models`
+
+**Descripción:** Devuelve la lista de modelos AI disponibles en el InferenceEngine. La respuesta se cachea en memoria durante `MODELS_CACHE_TTL` segundos (default: 5 minutos).
 
 **Headers:**
-| Header | Tipo | Requerido | Descripción |
-|--------|------|-----------|-------------|
-| `x-client-key` | string | ✅ | Clave de autenticación del cliente |
+| Header | Requerido |
+|--------|-----------|
+| `x-client-key` | ✅ |
 
 **Respuesta `200 OK`:**
 ```json
@@ -226,33 +132,24 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
       "name": "Llama 3 8B Instruct",
       "size": "8B",
       "format": "gguf"
-    },
-    {
-      "id": "mistral-7b-v0.3",
-      "name": "Mistral 7B v0.3",
-      "size": "7B",
-      "format": "gguf"
     }
   ]
 }
 ```
 
-> El esquema exacto de cada objeto modelo depende del InferenceEngine. El Orchestrator lo retransmite tal cual.
+> El esquema exacto de cada objeto depende del InferenceEngine. El Orchestrator retransmite la respuesta tal cual.
 
 **Errores:**
 | Código | Causa |
 |--------|-------|
-| `401` | `x-client-key` ausente o inválido |
-| `503` | InferenceEngine no disponible o timeout (10s) |
+| `401` | `x-client-key` inválido o ausente |
+| `503` | InferenceEngine no disponible |
 
 ---
 
-## Endpoints de Conversaciones
+### `GET /api/conversations/{user_id}`
 
-### `GET /chat/conversations/{user_id}`
-
-**Descripción:** Lista las últimas N conversaciones del usuario. Los resultados están filtrados por `client_id`, por lo que un cliente no puede ver las conversaciones de otro.  
-**Autenticación:** `x-client-key` requerido.
+**Descripción:** Lista las últimas N conversaciones filtradas por `client_id`. Un cliente no puede ver conversaciones de otro.
 
 **Parámetros de ruta:**
 | Parámetro | Tipo | Descripción |
@@ -262,12 +159,12 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 **Query params:**
 | Parámetro | Tipo | Default | Rango | Descripción |
 |-----------|------|---------|-------|-------------|
-| `limit` | int | `10` | 1–100 | Número de conversaciones a retornar |
+| `limit` | int | `10` | 1–100 | Número de conversaciones |
 
 **Headers:**
-| Header | Tipo | Requerido |
-|--------|------|-----------|
-| `x-client-key` | string | ✅ |
+| Header | Requerido |
+|--------|-----------|
+| `x-client-key` | ✅ |
 
 **Respuesta `200 OK`:**
 ```json
@@ -286,17 +183,16 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 ```
 
 **Errores:**
-```json
-{ "status": "error", "message": "Unauthorized" }
-{ "status": "error", "message": "<detalle del error>" }
-```
+| Código | Causa |
+|--------|-------|
+| `401` | `x-client-key` inválido o ausente |
+| `500` | Error al consultar JotaDB |
 
 ---
 
-### `GET /chat/conversations/{user_id}/{conversation_id}/messages`
+### `GET /api/conversations/{user_id}/{conversation_id}/messages`
 
-**Descripción:** Devuelve el historial de mensajes de una conversación específica, ordenados cronológicamente. Filtrado por `client_id`.  
-**Autenticación:** `x-client-key` requerido.
+**Descripción:** Devuelve el historial de mensajes de una conversación ordenados cronológicamente. Filtrado por `client_id`.
 
 **Parámetros de ruta:**
 | Parámetro | Tipo | Descripción |
@@ -307,12 +203,12 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 **Query params:**
 | Parámetro | Tipo | Default | Rango | Descripción |
 |-----------|------|---------|-------|-------------|
-| `limit` | int | `50` | 1–1000 | Número de mensajes a retornar |
+| `limit` | int | `50` | 1–1000 | Número de mensajes |
 
 **Headers:**
-| Header | Tipo | Requerido |
-|--------|------|-----------|
-| `x-client-key` | string | ✅ |
+| Header | Requerido |
+|--------|-----------|
+| `x-client-key` | ✅ |
 
 **Respuesta `200 OK`:**
 ```json
@@ -331,11 +227,10 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
       "id": "msg-uuid-0002",
       "conversation_id": "conv-uuid-1234",
       "role": "assistant",
-      "content": "Voy a buscar información actualizada...",
-      "created_at": "2026-03-03T17:00:12Z",
+      "content": "La energía solar es una fuente de energía renovable...",
+      "created_at": "2026-03-03T17:00:18Z",
       "metadata": {
-        "model_id": "llama-3-8b-instruct",
-        "thinking": true
+        "model_id": "llama-3-8b-instruct"
       }
     },
     {
@@ -348,52 +243,41 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
         "tool_name": "web_search",
         "execution_time": "1.45s"
       }
-    },
-    {
-      "id": "msg-uuid-0004",
-      "conversation_id": "conv-uuid-1234",
-      "role": "assistant",
-      "content": "La energía solar es una fuente de energía renovable...",
-      "created_at": "2026-03-03T17:00:18Z",
-      "metadata": {
-        "model_id": "llama-3-8b-instruct"
-      }
     }
   ]
 }
 ```
 
-> **Roles de mensaje:**
-> - `user` — Mensaje del usuario.
-> - `assistant` — Respuesta del modelo. `metadata.thinking=true` indica pensamiento pre-herramienta (no visible al usuario en tiempo real).
-> - `tool` — Resultado de una herramienta ejecutada. `metadata.tool_name` y `metadata.execution_time` proporcionan trazabilidad.
-> - `system` — Mensajes de sistema internos.
+**Roles de mensaje:**
+- `user` — Mensaje del usuario.
+- `assistant` — Respuesta del modelo. `metadata.model_id` indica qué modelo la generó.
+- `tool` — Resultado de una herramienta ejecutada. `metadata.tool_name` y `metadata.execution_time` proporcionan trazabilidad.
+- `system` — Mensajes de sistema internos.
 
 **Errores:**
-```json
-{ "status": "error", "message": "Unauthorized" }
-{ "status": "error", "message": "<detalle del error>" }
-```
+| Código | Causa |
+|--------|-------|
+| `401` | `x-client-key` inválido o ausente |
+| `500` | Error al consultar JotaDB |
 
 ---
 
-### `PATCH /chat/conversations/{conversation_id}` *(nuevo)*
+### `PATCH /api/conversations/{conversation_id}/model`
 
-**Descripción:** Actualiza el modelo AI asignado a una conversación. Antes de persistir, el Orchestrator valida que el `model_id` exista en el InferenceEngine (usando la caché de `GET /chat/models`). Si el Engine no responde, persiste el cambio de todos modos (degraded mode).  
-**Autenticación:** `x-client-key` requerido.
+**Descripción:** Actualiza el modelo AI asignado a una conversación. Valida que el `model_id` exista en el InferenceEngine antes de persistir (usando la caché de `/api/models`). Si el Engine no responde, permite el cambio igualmente (degraded mode).
 
 **Parámetros de ruta:**
 | Parámetro | Tipo | Descripción |
 |-----------|------|-------------|
-| `conversation_id` | string | UUID de la conversación a modificar |
+| `conversation_id` | string | UUID de la conversación |
 
 **Headers:**
-| Header | Tipo | Requerido |
-|--------|------|-----------|
-| `x-client-key` | string | ✅ |
-| `Content-Type` | `application/json` | ✅ |
+| Header | Requerido |
+|--------|-----------|
+| `x-client-key` | ✅ |
+| `Content-Type: application/json` | ✅ |
 
-**Cuerpo de la petición:**
+**Cuerpo:**
 ```json
 {
   "model_id": "mistral-7b-v0.3"
@@ -412,89 +296,133 @@ Cliente                       JotaOrchestrator              JotaDB           Inf
 **Errores:**
 | Código | Causa |
 |--------|-------|
-| `401` | `x-client-key` ausente o inválido |
-| `404` | `model_id` no encontrado en el Engine. La respuesta incluye la lista de modelos disponibles. |
-| `500` | Fallo al persistir en JotaDB |
+| `401` | `x-client-key` inválido o ausente |
+| `404` | `model_id` no existe en el Engine. La respuesta incluye la lista de modelos disponibles. |
+| `500` | Error al persistir en JotaDB |
 
 ```json
 // Ejemplo 404
 {
-  "detail": "Model 'gpt-9000' not found in Engine. Available: ['llama-3-8b-instruct', 'mistral-7b-v0.3']"
+  "detail": "Modelo 'gpt-9000' no encontrado. Disponibles: ['llama-3-8b-instruct', 'mistral-7b-v0.3']"
 }
 ```
 
 ---
 
-## Endpoints de Chat
+## Endpoint QUICK (`/api/quick`)
 
-### `POST /chat`
+Para clientes de tipo `quick`. Optimizado para comandos de voz, domótica y respuestas cortas sin contexto persistente.
 
-**Descripción:** Endpoint REST síncrono para clientes que no soporten WebSockets. Recibe un mensaje de texto, ejecuta la inferencia completa internamente y devuelve la respuesta final concatenada (sin streaming). Cada llamada crea una nueva conversación.  
-**Autenticación:** `x-client-key` requerido.
+### `POST /api/quick`
+
+**Descripción:** Ejecuta un comando rápido y devuelve la respuesta en streaming NDJSON (una línea JSON por evento). Stateless: no guarda mensajes en JotaDB. Optimizado para TTS (sin markdown, máximo 1-2 frases).
+
+Soporta ejecución de herramientas (p. ej. `web_search`): en ese caso se emiten eventos `status` intermedios antes de la respuesta final.
 
 **Headers:**
-| Header | Tipo | Requerido |
-|--------|------|-----------|
-| `x-client-key` | string | ✅ |
-| `Content-Type` | `application/json` | ✅ |
+| Header | Requerido |
+|--------|-----------|
+| `x-client-key` | ✅ (debe ser `client_type: quick`) |
+| `Content-Type: application/json` | ✅ |
 
-**Cuerpo de la petición:**
+**Cuerpo:**
 ```json
 {
-  "text": "¿Cuál es la capital de Francia?",
-  "user_id": "usuario1",
+  "text": "¿Qué tiempo hace en Madrid?",
+  "user_id": "voice_user",
   "model_id": "llama-3-8b-instruct"
 }
 ```
 
 | Campo | Tipo | Requerido | Default | Descripción |
 |-------|------|-----------|---------|-------------|
-| `text` | string | ✅ | — | Mensaje del usuario |
-| `user_id` | string | ❌ | `"api_user"` | Identificador del usuario |
-| `model_id` | string | ❌ | `null` | Modelo a usar (si `null`, usa el modelo cargado en el Engine) |
+| `text` | string | ✅ | — | Comando o pregunta del usuario |
+| `user_id` | string | ❌ | `"quick_user"` | Identificador del usuario (solo para logs) |
+| `model_id` | string | ❌ | `null` | Modelo a usar. Si `null`, usa el cargado actualmente en el Engine. |
 
-**Flujo interno:**
-1. Autenticación con `client_key`.
-2. Creación de nueva conversación en JotaDB.
-3. Apertura de sesión efímera en el InferenceEngine (cierra la anterior si existía para ese `user_id`).
-4. Inyección de contexto de la conversación en la sesión.
-5. Guardado del mensaje del usuario en JotaDB.
-6. Streaming interno de tokens → acumulación en buffer.
-7. Guardado de la respuesta del asistente en JotaDB (con `metadata.model_id`).
-8. Liberación de la sesión de inferencia.
-9. Devolución de la respuesta completa.
+**Respuesta: stream NDJSON**
 
-**Respuesta `200 OK`:**
-```json
-{
-  "status": "success",
-  "response": "La capital de Francia es París."
+La respuesta es un stream HTTP con `Content-Type: application/x-ndjson`. Cada línea es un objeto JSON terminado en `\n`:
+
+| `type` | Descripción | Acción recomendada |
+|--------|-------------|-------------------|
+| `token` | Fragmento de texto de la respuesta | Acumular y reproducir por TTS |
+| `status` | Estado intermedio (búsqueda, procesamiento) | Mostrar spinner o feedback visual |
+| `error` | Error durante la ejecución | Mostrar al usuario, detener acumulación |
+
+```
+{"type": "token", "content": "En Madrid hay "}\n
+{"type": "token", "content": "18 grados "}\n
+{"type": "token", "content": "y cielo despejado."}\n
+```
+
+Ejemplo con ejecución de herramienta:
+```
+{"type": "status", "content": "Buscando información usando web_search..."}\n
+{"type": "status", "content": "Búsqueda completada en 1.23s. Generando respuesta..."}\n
+{"type": "status", "content": "Analizando resultados..."}\n
+{"type": "token", "content": "Según los últimos datos, "}\n
+{"type": "token", "content": "el tiempo en Madrid es soleado con 22 grados."}\n
+```
+
+**Errores HTTP (antes de iniciar el stream):**
+| Código | Causa |
+|--------|-------|
+| `401` | `x-client-key` inválido o ausente |
+| `403` | El `client_type` no es `quick` |
+| `503` | InferenceEngine no disponible |
+
+**Ejemplo de cliente JavaScript:**
+```javascript
+const response = await fetch("http://localhost:8000/api/quick", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-client-key": "mi_clave_quick"
+  },
+  body: JSON.stringify({ text: "Pon un timer de 5 minutos", user_id: "voice" })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+let buffer = "";
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const lines = decoder.decode(value).split("\n").filter(Boolean);
+  for (const line of lines) {
+    const msg = JSON.parse(line);
+    if (msg.type === "token") {
+      buffer += msg.content; // Acumular para TTS
+    } else if (msg.type === "status") {
+      console.log("Estado:", msg.content); // Feedback visual
+    } else if (msg.type === "error") {
+      console.error("Error:", msg.content);
+    }
+  }
 }
-```
 
-**Errores:**
-```json
-{ "status": "error", "message": "Unauthorized" }
-{ "status": "error", "message": "Inference timed out waiting for token" }
-{ "status": "error", "message": "<detalle del error>" }
+speakTTS(buffer); // Reproducir respuesta acumulada
 ```
-
-> ⚠️ **Limitación:** Este endpoint no soporta conversaciones multi-turno entre llamadas distintas, ya que siempre crea una conversación nueva. Para conversaciones continuas, usa el WebSocket.
 
 ---
 
-### `WebSocket /ws/chat/{user_id}`
+## Endpoint CHAT (`/api/chat`)
 
-**Descripción:** Conexión WebSocket persistente para chat en tiempo real con streaming de tokens. Soporta conversaciones multi-turno en una sola conexión.  
-**Autenticación:** Via header o query param (ver abajo).
+Para clientes de tipo `chat`. Conversación persistente multi-turno con streaming de tokens en tiempo real.
 
-#### Conexión y Autenticación
+### `WebSocket /api/chat/ws/{user_id}`
 
+**Descripción:** Conexión WebSocket persistente para chat en tiempo real. Soporta conversaciones multi-turno, cambio de modelo mid-session y ejecución de herramientas.
+
+**URL de conexión:**
 ```
-ws://host:port/ws/chat/{user_id}
-  ?conversation_id=conv-uuid-1234   (opcional, retoma conversación existente)
-  ?model_id=llama-3-8b-instruct     (opcional, modelo a usar)
-  &x_client_key=<tu_clave>          (o via header x-client-key)
+ws://host:port/api/chat/ws/{user_id}
+  ?conversation_id=conv-uuid-1234    (opcional — retoma conversación existente)
+  ?model_id=llama-3-8b-instruct      (opcional — modelo a usar)
+  &x_client_key=<tu_clave>           (o via header x-client-key)
 ```
 
 **Parámetros de ruta:**
@@ -506,112 +434,128 @@ ws://host:port/ws/chat/{user_id}
 | Parámetro | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
 | `conversation_id` | string | ❌ | UUID de conversación a retomar. Si se omite, se crea una nueva. |
-| `model_id` | string | ❌ | Modelo AI para esta sesión. Si se omite, usa el cargado actualmente en el Engine. |
-| `x_client_key` | string | ✅* | Clave de autenticación (alternativa al header) |
+| `model_id` | string | ❌ | Modelo AI para esta sesión. Si se omite, usa el cargado en el Engine. |
+| `x_client_key` | string | ✅* | Clave de autenticación |
 | `client_key` | string | ✅* | Alias alternativo para `x_client_key` |
 
 > \* Al menos uno de `x-client-key` (header) o `x_client_key`/`client_key` (query) es obligatorio.
 
-**Si la autenticación falla:** El servidor cierra el WebSocket con código `4001` (Unauthorized) antes de hacer accept. No se envía ningún frame.
+**Autenticación fallida:** el servidor cierra el WebSocket con código `4001` antes de hacer `accept`.
+**Tipo de cliente incorrecto (`quick`):** cierra con código `4003`.
 
-#### Ciclo de vida de la conexión
+#### Ciclo de vida
 
 ```
 APERTURA
   ├─ Validación de client_key                → close(4001) si falla
+  ├─ Validación client_type != "quick"       → close(4003) si es quick
+  ├─ Verificación Engine disponible          → close(1011) si no disponible
   ├─ Gestión de conversación                 → create_conversation() si no hay conversation_id
   ├─ ensure_session()                        → cierra sesión previa del user_id si existía
-  ├─ get_conversation_messages() + set_context() → inyecta historial previo al Engine
+  ├─ get_conversation_messages() + set_context() → inyecta historial en el Engine
   └─ websocket.accept()                      → conexión lista
 
-BUCLE DE MENSAJES (mientras el cliente esté conectado)
-  ├─ Recibir texto del cliente
-  ├─ save_message(role="user")
-  └─ LOOP streaming:
-      ├─ infer(...) → yield tokens
-      └─ send_text(token) por cada token recibido
+BUCLE DE MENSAJES
+  ├─ Recibir texto plano → inferencia + streaming de tokens
+  └─ Recibir JSON con "type" → mensaje de control (ver abajo)
 
-CIERRE (WebSocketDisconnect o error)
-  └─ release_session(user_id)               → libera sesión en InferenceEngine
+CIERRE
+  └─ release_session(user_id)
 ```
 
 #### Protocolo de mensajes
 
-| Dirección | Formato | Descripción |
-|-----------|---------|-------------|
-| Cliente → Servidor | Texto plano | El mensaje del usuario. Ej: `"¿Cuándo fue la Revolución Francesa?"` |
-| Servidor → Cliente | JSON `{"type": "token", "content": "..."}` | Fragmentos de texto de la respuesta del modelo |
-| Servidor → Cliente | JSON `{"type": "status", "content": "..."}` | Indicadores de estado (búsqueda, procesamiento) — **no es texto para el usuario** |
-| Servidor → Cliente | JSON `{"type": "model_switched", ...}` | Confirmación de cambio de modelo mid-session |
-| Servidor → Cliente | JSON `{"type": "error", ...}` | Mensaje de error |
-| Cierre con `4001` | — | Autenticación fallida (antes de `accept`) |
-| Cierre con `1011` | — | Error interno del servidor |
+**Cliente → Servidor:**
 
-> **Importante:** El cliente debe parsear cada frame como JSON y actuar según el campo `type`:
-> - `token` → Acumular `content` en el buffer de respuesta visible.
-> - `status` → Mostrar indicador visual (spinner, texto de estado) sin acumular en la respuesta.
+| Formato | Descripción |
+|---------|-------------|
+| Texto plano | Mensaje del usuario. Ej: `"¿Cuándo fue la Revolución Francesa?"` |
+| `{"type": "switch_model", "model_id": "..."}` | Cambia el modelo mid-session sin reconectar |
+
+**Servidor → Cliente:**
+
+| `type` | Descripción | Acción recomendada |
+|--------|-------------|-------------------|
+| `token` | Fragmento de texto de la respuesta | Acumular en buffer de respuesta |
+| `status` | Estado intermedio (búsqueda, herramienta) | Mostrar spinner o texto de estado |
+| `model_switched` | Confirmación de cambio de modelo | Actualizar UI con nuevo modelo |
+| `error` | Error durante la sesión | Mostrar al usuario |
+
+```json
+// Ejemplos de frames del servidor
+{"type": "token", "content": "La Revolución Francesa "}
+{"type": "token", "content": "comenzó en 1789."}
+{"type": "status", "content": "Buscando información actualizada..."}
+{"type": "model_switched", "model_id": "mistral-7b-v0.3"}
+{"type": "error", "message": "Inference Engine no disponible"}
+```
+
+**Cierre del WebSocket:**
+
+| Código | Significado |
+|--------|-------------|
+| `4001` | Autenticación rechazada |
+| `4003` | Tipo de cliente no permitido (`quick` intentando usar WS) |
+| `1011` | Error interno del servidor |
+| `1000` | Cierre normal iniciado por el cliente |
 
 #### Ejemplo de cliente JavaScript
 
 ```javascript
 const ws = new WebSocket(
-  `ws://localhost:8000/ws/chat/usuario1` +
+  `ws://localhost:8000/api/chat/ws/usuario1` +
   `?conversation_id=conv-uuid-1234` +
-  `&x_client_key=mi_clave_secreta`
+  `&x_client_key=mi_clave_chat`
 );
 
 let buffer = "";
 
 ws.onmessage = (event) => {
-  try {
-    const msg = JSON.parse(event.data);
-    
-    if (msg.type === "token") {
-      // Texto de respuesta del modelo — acumular y mostrar
-      buffer += msg.content;
-      document.getElementById("response").textContent = buffer;
-    } else if (msg.type === "status") {
-      // Indicador de estado — mostrar spinner o texto temporal
-      document.getElementById("status").textContent = msg.content;
-    } else if (msg.type === "error") {
-      console.error("Server error:", msg.message);
-    } else if (msg.type === "model_switched") {
-      console.log("Model changed to:", msg.model_id);
-    }
-  } catch (e) {
-    // Fallback: tratar como texto plano
-    buffer += event.data;
+  const msg = JSON.parse(event.data);
+
+  if (msg.type === "token") {
+    buffer += msg.content;
+    document.getElementById("response").textContent = buffer;
+  } else if (msg.type === "status") {
+    document.getElementById("status").textContent = msg.content;
+  } else if (msg.type === "model_switched") {
+    console.log("Modelo cambiado a:", msg.model_id);
+  } else if (msg.type === "error") {
+    console.error("Error del servidor:", msg.message);
   }
 };
 
 ws.onopen = () => {
   buffer = "";
-  ws.send("Busca información sobre inteligencia artificial");
+  ws.send("Explícame la fotosíntesis");
 };
 
-ws.onerror = (error) => console.error("WebSocket error:", error);
+// Cambiar modelo mid-session (sin reconectar)
+function switchModel(modelId) {
+  ws.send(JSON.stringify({ type: "switch_model", model_id: modelId }));
+}
 
-ws.onclose = (event) => {
-  console.log(`Conexión cerrada: código ${event.code}, razón: ${event.reason}`);
-};
+ws.onerror = (e) => console.error("WebSocket error:", e);
+ws.onclose = (e) => console.log(`Cerrado: código ${e.code}`);
 ```
 
-#### Gestión de contexto y memoria
+#### Gestión de contexto
 
-- Al abrirse la conexión, el Orchestrator **recupera automáticamente** el historial de la `conversation_id` desde JotaDB e inyecta los mensajes como contexto en la sesión del InferenceEngine via `set_context`.
-- Cada mensaje de usuario y cada respuesta del asistente son **persistidos automáticamente** en JotaDB durante la sesión.
-- Las respuestas del asistente guardadas incluyen `metadata.model_id` para trazabilidad del modelo usado.
-- Si una inferencia se interrumpe (desconexión abrupta), la respuesta parcial se guarda con el sufijo `[INTERRUPTED]` definido en `constants.INTERRUPTED_MARKER`.
+- Al abrirse la conexión, el Orchestrator **recupera automáticamente** el historial de la `conversation_id` desde JotaDB e inyecta los mensajes como contexto en el InferenceEngine.
+- Cada mensaje de usuario y cada respuesta del asistente se **persisten automáticamente** en JotaDB.
+- Si la inferencia se interrumpe por desconexión abrupta, la respuesta parcial se guarda con el sufijo `[INTERRUPTED]`.
+- El InferenceEngine mantiene **una sesión activa por `user_id`** a la vez. Abrir una nueva conexión para el mismo `user_id` cierra la sesión anterior.
 
 ---
 
-## Códigos de Error y Respuestas de Error
+## Códigos de Error
 
 ### HTTP
 
 | Código | Causa típica |
 |--------|-------------|
-| `401 Unauthorized` | `x-client-key` ausente, expirado, o inválido |
+| `401 Unauthorized` | `x-client-key` ausente, expirado o inválido |
+| `403 Forbidden` | Tipo de cliente no permitido en ese endpoint |
 | `404 Not Found` | `model_id` no existe en el Engine |
 | `500 Internal Server Error` | Fallo al persistir en JotaDB |
 | `503 Service Unavailable` | InferenceEngine no disponible o timeout |
@@ -620,31 +564,7 @@ ws.onclose = (event) => {
 
 | Código | Significado |
 |--------|-------------|
-| `4001` | Autenticación rechazada (client_key inválido o ausente) |
-| `1011` | Error interno del servidor durante la sesión |
-| `1000` | Cierre normal iniciado por el cliente |
-
----
-
-## Notas de Implementación y Limitaciones
-
-### Caché de modelos
-`GET /chat/models` y la validación en `PATCH /chat/conversations/{id}` usan una **caché en memoria con TTL configurable** (`MODELS_CACHE_TTL`, default 300s / 5 minutos). Esto significa que:
-- Los modelos recién añadidos al Engine pueden tardar hasta `MODELS_CACHE_TTL` segundos en aparecer.
-- Reinicios del Orchestrator invalidan la caché (se recarga en la próxima llamada).
-
-### Sesiones de inferencia por usuario
-El InferenceEngine mantiene **una sesión activa por `user_id`** a la vez. Si:
-- Se abre una nueva conexión WebSocket para un `user_id` que ya tiene sesión → la anterior se cierra automáticamente.
-- Se hace `POST /chat` para un `user_id` con sesión WebSocket activa → la sesión WebSocket se interrumpe.
-
-### Aislamiento de datos
-Las conversaciones y mensajes están asociados al `client_id` (derivado de la `client_key`). Un cliente no puede acceder a datos de otro cliente, incluso si conoce el `user_id` o `conversation_id`.
-
-### Gestión del modelo en el Engine
-El `model_id` en `POST /chat` y en la apertura del WebSocket indica al Orchestrator **qué modelo debe estar cargado** en el InferenceEngine. El Orchestrator puede enviar un comando `COMMAND_LOAD_MODEL` al Engine si el modelo no está cargado actualmente. La carga puede fallar si:
-- Hay una inferencia en progreso (`InferenceEngineBusyError` → `503`).
-- El modelo no existe en el Engine (`ModelNotFoundError` → `404`).
-
-### Prefijo de versión de API
-Actualmente los endpoints están en la raíz (`/chat/...`). Está previsto migrar a `/api/v1/chat/...` en futuras versiones. La línea correspondiente en `main.py` está comentada para facilitar la transición.
+| `4001` | Autenticación rechazada |
+| `4003` | Tipo de cliente no permitido |
+| `1011` | Error interno del servidor |
+| `1000` | Cierre normal |
