@@ -180,8 +180,8 @@ async def quick_endpoint(
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     # 2. Validar tipo de cliente
-    client_type = client_data.get("client_type", "chat")
-    if client_type != "quick":
+    client_type = client_data.get("client_type", "CHAT")
+    if client_type != "QUICK":
         raise HTTPException(
             status_code=403, 
             detail=f"Client type '{client_type}' not allowed on /quick endpoint. Expected 'quick'."

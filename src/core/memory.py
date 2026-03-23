@@ -252,7 +252,7 @@ class MemoryManager:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"Failed to get conversations for user {user_id}: {e}")
+            logger.error(f"Failed to get conversations for client {client_id}: {e}")
             return []
 
     async def save_message(

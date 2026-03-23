@@ -95,7 +95,7 @@ def validate_tool_call(tool_call: dict, available_tools: list[str]) -> tuple[boo
     return True, ""
 
 
-def remove_tool_calls_from_text(text: str) -> str:
+def remove_tool_calls_from_text(text: str, strip: bool = False) -> str:
     """Remove all <tool_call>...</tool_call> blocks from text.
 
     Also collapses any blank lines left behind when a tool call occupied
@@ -103,12 +103,15 @@ def remove_tool_calls_from_text(text: str) -> str:
 
     Args:
         text: Raw model output that may contain tool_call blocks.
+        strip: If True, strip leading/trailing whitespace from the result.
+               Leave False when processing individual streaming tokens to
+               preserve inter-word spaces.
 
     Returns:
         Cleaned text with all tool_call blocks removed.
     """
     cleaned = TOOL_CALL_PATTERN.sub("", text)
     # Collapse 3+ consecutive newlines (left by a standalone tool_call line)
-    # down to a single blank line, then strip leading/trailing whitespace.
+    # down to a single blank line.
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned.strip()
+    return cleaned.strip() if strip else cleaned
