@@ -1,3 +1,11 @@
+## [1.0.2](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.1...v1.0.2) (2026-03-23)
+
+
+### Bug Fixes
+
+* uppercase client_type comparison, fix log var, add strip param to tool parser ([cdaf810](https://github.com/Jota-project/jota-orchestrator/commit/cdaf8106d4d0c88521684aaf84ddd07e95d5e6ac))
+* uppercase client_type, fix log var, add strip param to tool parser ([#10](https://github.com/Jota-project/jota-orchestrator/issues/10)) ([5b5620d](https://github.com/Jota-project/jota-orchestrator/commit/5b5620d88a21e6bc086b81d1d43cf5a031df96f1))
+
 ## [1.0.1](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.0...v1.0.1) (2026-03-21)
 
 
