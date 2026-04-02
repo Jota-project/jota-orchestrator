@@ -1,3 +1,11 @@
+## [1.0.3](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.2...v1.0.3) (2026-04-02)
+
+
+### Bug Fixes
+
+* **memory:** use real client UUID in conversations, extra_data in messages ([f948758](https://github.com/Jota-project/jota-orchestrator/commit/f948758588261934bc36bf86649d562f76296b64)), closes [#9](https://github.com/Jota-project/jota-orchestrator/issues/9)
+* **memory:** use real client UUID in conversations, extra_data in messages ([#12](https://github.com/Jota-project/jota-orchestrator/issues/12)) ([2dac337](https://github.com/Jota-project/jota-orchestrator/commit/2dac337f6b87cadaa28895768cd61515f7609276))
+
 ## [1.0.2](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.1...v1.0.2) (2026-03-23)
 
 
