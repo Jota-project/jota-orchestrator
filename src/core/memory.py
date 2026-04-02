@@ -122,7 +122,7 @@ class MemoryManager:
             logger.error(f"Error validating client key: {e}")
             return False
 
-    async def create_conversation(self, user_id: str, client_id: int, model_id: Optional[str] = None) -> Dict[str, Any]:
+    async def create_conversation(self, client_id: Any, model_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Creates a new conversation in JotaDB.
         Optionally links it to a specific model via model_id.
@@ -135,7 +135,7 @@ class MemoryManager:
                 "X-Client-ID": str(client_id)
             }
 
-            payload: Dict[str, Any] = {"client_id": user_id, "status": "active"}
+            payload: Dict[str, Any] = {"client_id": client_id, "status": "active"}
             if model_id:
                 payload["model_id"] = model_id
 
@@ -148,7 +148,7 @@ class MemoryManager:
             return create_response.json()
 
         except Exception as e:
-            logger.error(f"Error managing conversation for user {user_id}: {e}")
+            logger.error(f"Error managing conversation for client {client_id}: {e}")
             raise e
 
     async def get_conversation(self, conversation_id: str, client_id: Any) -> Optional[Dict[str, Any]]:
@@ -279,7 +279,7 @@ class MemoryManager:
         try:
             payload: Dict[str, Any] = {"role": role, "content": content}
             if metadata:
-                payload["metadata"] = metadata
+                payload["extra_data"] = metadata
 
             service_headers = {
                 **self.base_headers,

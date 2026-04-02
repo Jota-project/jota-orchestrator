@@ -44,10 +44,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         return
         
     # 2. Validar tipo de cliente
-    client_type = client_data.get("client_type", "chat")
-    if client_type == "quick":
+    client_type = client_data.get("client_type", "CHAT")
+    if client_type == "QUICK":
         logger.warning(f"QUICK client {client_data['id']} attempted WS connection")
-        await websocket.close(code=4003, reason="Client type 'quick' not allowed on WebSocket")
+        await websocket.close(code=4003, reason="Client type 'QUICK' not allowed on WebSocket")
         return
         
     client_id = client_data["id"]
@@ -71,7 +71,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         model_id = websocket.query_params.get("model_id") or None
         if not conversation_id:
             conversation = await memory_manager.create_conversation(
-                user_id, client_id=client_id, model_id=model_id
+                client_id=client_id, model_id=model_id
             )
             conversation_id = conversation["id"]
             logger.info(
