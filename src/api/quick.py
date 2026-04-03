@@ -43,27 +43,25 @@ Ejemplos de respuesta correcta:
 class QuickRequest(BaseModel):
     """Petición para el endpoint QUICK."""
     text: str
-    user_id: str = "quick_user"
     model_id: Optional[str] = None
 
 
 async def _quick_stream_generator(
-    client_id: int, 
-    user_id: str, 
-    session_id: str, 
-    text: str, 
+    client_id: str,
+    session_id: str,
+    text: str,
     model_id: Optional[str]
 ) -> AsyncGenerator[str, None]:
     """Generador que emite líneas JSON (NDJSON) con tokens de texto y metadatos."""
     
     log_prefix = f"[QUICK][Sess: {session_id}]"
-    
+
     # Preparamos el system prompt incluyendo instrucciones de tools si aplica
     tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
     full_prompt = f"{QUICK_SYSTEM_PROMPT}\n"
     if tool_instructions:
         full_prompt += f"\n{tool_instructions}\n"
-    
+
     # Parámetros optimizados para respuestas cortas (primera pasada)
     quick_params = {
         "temp": 0.3,
@@ -76,20 +74,19 @@ async def _quick_stream_generator(
         "max_tokens": 100,
         "system_prompt": full_prompt
     }
-    
+
     tool_executed = False
-    
+
     try:
         # 1. Primera pasada de inferencia
         async for token in inference_client.infer(
             session_id=session_id,
             prompt=text,
             conversation_id=f"quick_{session_id}",
-            user_id=user_id,
             params=quick_params,
             client_id=client_id,
             model_id=model_id,
-            persist_messages=False, # Stateless HTTP run
+            persist_messages=False,  # Stateless HTTP run
         ):
             if isinstance(token, dict) and token.get("type") == "tool_call":
                 tc_payload = token.get("payload", {})
@@ -135,7 +132,6 @@ async def _quick_stream_generator(
                 session_id=session_id,
                 prompt=settings.TOOL_FOLLOWUP_PROMPT,
                 conversation_id=f"quick_{session_id}",
-                user_id=user_id,
                 params=quick_final_params,
                 client_id=client_id,
                 model_id=model_id,
@@ -203,10 +199,9 @@ async def quick_endpoint(
     return StreamingResponse(
         _quick_stream_generator(
             client_id=client_id,
-            user_id=request.user_id,
             session_id=session_id,
             text=request.text,
-            model_id=request.model_id
+            model_id=request.model_id,
         ),
         media_type="application/x-ndjson"
     )

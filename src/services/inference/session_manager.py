@@ -61,19 +61,19 @@ class InferenceSessionMixin:
              except Exception as e:
                  logger.error(f"Failed to close session {session_id}: {e}")
 
-    async def ensure_session(self, user_id: str) -> str:
+    async def ensure_session(self, client_id: str) -> str:
         """
-        Creates a fresh session for a user, closing any existing one first.
+        Creates a fresh session for a client, closing any existing one first.
         Tracks active sessions to avoid leaving dangling resources.
         """
-        old_session = self._user_sessions.get(user_id)
+        old_session = self._user_sessions.get(client_id)
         if old_session:
-            logger.info(f"Closing previous session {old_session} for user {user_id}")
+            logger.info(f"Closing previous session {old_session} for client {client_id}")
             await self.close_session(old_session)
-        
+
         session_id = await self.create_session()
-        self._user_sessions[user_id] = session_id
-        logger.info(f"New session {session_id} assigned to user {user_id}")
+        self._user_sessions[client_id] = session_id
+        logger.info(f"New session {session_id} assigned to client {client_id}")
         return session_id
 
     async def set_context(self, session_id: str, messages: list):
@@ -94,12 +94,12 @@ class InferenceSessionMixin:
         await self.websocket.send(json.dumps(payload))
         logger.info(f"Context set for session {session_id} ({len(messages)} messages)")
 
-    async def release_session(self, user_id: str):
+    async def release_session(self, client_id: str):
         """
-        Closes and unregisters a user's active session.
+        Closes and unregisters a client's active session.
         Called on client disconnect to free InferenceCenter resources.
         """
-        session_id = self._user_sessions.pop(user_id, None)
+        session_id = self._user_sessions.pop(client_id, None)
         if session_id:
-            logger.info(f"Releasing session {session_id} for user {user_id}")
+            logger.info(f"Releasing session {session_id} for client {client_id}")
             await self.close_session(session_id)

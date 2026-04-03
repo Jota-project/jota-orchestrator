@@ -33,14 +33,13 @@ class JotaInputMixin:
         content = payload.get("content")
         session_id = payload.get("session_id")
         conversation_id = payload.get("conversation_id")
-        user_id = payload.get("user_id")
         client_id = payload.get("client_id")
         model_id = payload.get("model_id")
         stateless = payload.get("stateless", False)
         system_prompt_override = payload.get("system_prompt_override")
 
-        if not session_id or not conversation_id or not user_id:
-            logger.error("Missing session_id, conversation_id, or user_id in payload")
+        if not session_id or not conversation_id or not client_id:
+            logger.error("Missing session_id, conversation_id, or client_id in payload")
             yield " [Error: Internal Context Missing]"
             return
 
@@ -88,7 +87,6 @@ class JotaInputMixin:
                 session_id=session_id,
                 prompt=content,
                 conversation_id=conversation_id,
-                user_id=user_id,
                 params=infer_params,
                 client_id=client_id,
                 model_id=effective_model,
@@ -105,7 +103,6 @@ class JotaInputMixin:
                         if not stateless:
                             await self.memory_manager.save_message(
                                 conversation_id=conversation_id,
-                                user_id=user_id,
                                 role="assistant",
                                 content=thinking_text,
                                 client_id=client_id,
@@ -126,7 +123,6 @@ class JotaInputMixin:
                         if not stateless:
                             await self.memory_manager.save_message(
                                 conversation_id=conversation_id,
-                                user_id=user_id,
                                 role="tool",
                                 content=result_str,
                                 client_id=client_id,
@@ -139,7 +135,6 @@ class JotaInputMixin:
                         if not stateless:
                             await self.memory_manager.save_message(
                                 conversation_id=conversation_id,
-                                user_id=user_id,
                                 role="tool",
                                 content=f"Error executing tool {tool_name}: {e}",
                                 client_id=client_id,
@@ -165,7 +160,6 @@ class JotaInputMixin:
                             if clean_thinking.strip() and not stateless:
                                 await self.memory_manager.save_message(
                                     conversation_id=conversation_id,
-                                    user_id=user_id,
                                     role="assistant",
                                     content=clean_thinking,
                                     client_id=client_id,
@@ -184,7 +178,6 @@ class JotaInputMixin:
                                 if not stateless:
                                     await self.memory_manager.save_message(
                                         conversation_id=conversation_id,
-                                        user_id=user_id,
                                         role="tool",
                                         content=result_str,
                                         client_id=client_id,
@@ -197,7 +190,6 @@ class JotaInputMixin:
                                 if not stateless:
                                     await self.memory_manager.save_message(
                                         conversation_id=conversation_id,
-                                        user_id=user_id,
                                         role="tool",
                                         content=f"Error executing tool {tool_name}: {e}",
                                         client_id=client_id,
@@ -228,7 +220,6 @@ class JotaInputMixin:
                     session_id=session_id,
                     prompt=followup_prompt,
                     conversation_id=conversation_id,
-                    user_id=user_id,
                     params=infer_params,
                     client_id=client_id,
                     model_id=effective_model,

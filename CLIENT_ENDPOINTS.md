@@ -9,13 +9,13 @@
    - `GET /health` — Health Check
 4. [Endpoints de Datos (`/api`)](#endpoints-de-datos-api)
    - `GET /api/models` — Listar modelos
-   - `GET /api/conversations/{user_id}` — Listar conversaciones
-   - `GET /api/conversations/{user_id}/{conversation_id}/messages` — Mensajes
+   - `GET /api/conversations` — Listar conversaciones
+   - `GET /api/conversations/{conversation_id}/messages` — Mensajes
    - `PATCH /api/conversations/{conversation_id}/model` — Cambiar modelo
 5. [Endpoint QUICK (`/api/quick`)](#endpoint-quick-apiquick)
    - `POST /api/quick` — Comando rápido con streaming NDJSON
 6. [Endpoint CHAT (`/api/chat`)](#endpoint-chat-apichat)
-   - `WebSocket /api/chat/ws/{user_id}` — Chat en tiempo real
+   - `WebSocket /api/chat/ws` — Chat en tiempo real
 7. [Códigos de Error](#códigos-de-error)
 
 ---
@@ -30,7 +30,7 @@ JotaOrchestrator distingue dos tipos de clientes. El tipo se configura en JotaDB
 
 | `client_type` | Endpoints permitidos | Caso de uso |
 |---------------|---------------------|-------------|
-| `chat` | `/api/chat/ws/...` + todos los de `/api/` | Aplicaciones de conversación, interfaces web |
+| `chat` | `/api/chat/ws` + todos los de `/api/` | Aplicaciones de conversación, interfaces web |
 | `quick` | `/api/quick` + todos los de `/api/` | Agentes de voz, domótica, comandos rápidos |
 
 ### Mecanismo de autenticación
@@ -38,7 +38,7 @@ JotaOrchestrator distingue dos tipos de clientes. El tipo se configura en JotaDB
 - **Header HTTP:** `x-client-key: <tu_clave_de_cliente>`
 - **Query param WebSocket:** `?x_client_key=<clave>` o `?client_key=<clave>` (para clientes que no soporten cabeceras personalizadas al abrir el WebSocket)
 - La clave se valida en JotaDB en cada petición. Si es inválida o falta → `401 Unauthorized`.
-- La validación devuelve internamente el `client_id` numérico, que aísla los datos de cada cliente (las conversaciones y mensajes pertenecen al `client_id`, no solo al `user_id`).
+- La validación devuelve internamente el `client_id` UUID, que aísla los datos de cada cliente.
 
 > ⚠️ Las credenciales `ORCHESTRATOR_API_KEY` y `JOTA_DB_SK` son internas del servidor. El cliente nunca debe conocerlas.
 
@@ -51,13 +51,13 @@ GET  /                                              — Liveness check (sin auth
 GET  /health                                        — Health check profundo (sin auth)
 
 GET  /api/models                                    — Lista modelos del Engine
-GET  /api/conversations/{user_id}                   — Lista conversaciones
-GET  /api/conversations/{user_id}/{conv_id}/messages — Historial de mensajes
+GET  /api/conversations                             — Lista conversaciones del cliente
+GET  /api/conversations/{conv_id}/messages          — Historial de mensajes
 PATCH /api/conversations/{conv_id}/model            — Cambia modelo de conversación
 
 POST /api/quick                                     — Comando rápido NDJSON (client_type: quick)
 
-WS   /api/chat/ws/{user_id}                         — Chat en tiempo real (client_type: chat)
+WS   /api/chat/ws                                   — Chat en tiempo real (client_type: chat)
 ```
 
 ---
@@ -147,14 +147,9 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
 
 ---
 
-### `GET /api/conversations/{user_id}`
+### `GET /api/conversations`
 
-**Descripción:** Lista las últimas N conversaciones filtradas por `client_id`. Un cliente no puede ver conversaciones de otro.
-
-**Parámetros de ruta:**
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `user_id` | string | Identificador del usuario |
+**Descripción:** Lista las últimas N conversaciones del cliente autenticado. La identidad se resuelve desde la `x-client-key`.
 
 **Query params:**
 | Parámetro | Tipo | Default | Rango | Descripción |
@@ -173,7 +168,7 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
   "conversations": [
     {
       "id": "conv-uuid-1234",
-      "user_id": "usuario1",
+      "client_id": "client-uuid-5678",
       "model_id": "llama-3-8b-instruct",
       "created_at": "2026-03-03T17:00:00Z",
       "updated_at": "2026-03-03T17:45:00Z"
@@ -190,14 +185,13 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
 
 ---
 
-### `GET /api/conversations/{user_id}/{conversation_id}/messages`
+### `GET /api/conversations/{conversation_id}/messages`
 
 **Descripción:** Devuelve el historial de mensajes de una conversación ordenados cronológicamente. Filtrado por `client_id`.
 
 **Parámetros de ruta:**
 | Parámetro | Tipo | Descripción |
 |-----------|------|-------------|
-| `user_id` | string | Identificador del usuario |
 | `conversation_id` | string | UUID de la conversación |
 
 **Query params:**
@@ -221,7 +215,7 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
       "role": "user",
       "content": "Busca información sobre energía solar",
       "created_at": "2026-03-03T17:00:10Z",
-      "metadata": null
+      "extra_data": null
     },
     {
       "id": "msg-uuid-0002",
@@ -229,7 +223,7 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
       "role": "assistant",
       "content": "La energía solar es una fuente de energía renovable...",
       "created_at": "2026-03-03T17:00:18Z",
-      "metadata": {
+      "extra_data": {
         "model_id": "llama-3-8b-instruct"
       }
     },
@@ -239,7 +233,7 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
       "role": "tool",
       "content": "{\"results\": [{\"title\": \"Solar energy overview...\"}]}",
       "created_at": "2026-03-03T17:00:14Z",
-      "metadata": {
+      "extra_data": {
         "tool_name": "web_search",
         "execution_time": "1.45s"
       }
@@ -250,8 +244,8 @@ Disponibles para ambos tipos de cliente (`chat` y `quick`). Todos requieren `x-c
 
 **Roles de mensaje:**
 - `user` — Mensaje del usuario.
-- `assistant` — Respuesta del modelo. `metadata.model_id` indica qué modelo la generó.
-- `tool` — Resultado de una herramienta ejecutada. `metadata.tool_name` y `metadata.execution_time` proporcionan trazabilidad.
+- `assistant` — Respuesta del modelo. `extra_data.model_id` indica qué modelo la generó.
+- `tool` — Resultado de una herramienta ejecutada. `extra_data.tool_name` y `extra_data.execution_time` proporcionan trazabilidad.
 - `system` — Mensajes de sistema internos.
 
 **Errores:**
@@ -329,7 +323,6 @@ Soporta ejecución de herramientas (p. ej. `web_search`): en ese caso se emiten 
 ```json
 {
   "text": "¿Qué tiempo hace en Madrid?",
-  "user_id": "voice_user",
   "model_id": "llama-3-8b-instruct"
 }
 ```
@@ -337,7 +330,6 @@ Soporta ejecución de herramientas (p. ej. `web_search`): en ese caso se emiten 
 | Campo | Tipo | Requerido | Default | Descripción |
 |-------|------|-----------|---------|-------------|
 | `text` | string | ✅ | — | Comando o pregunta del usuario |
-| `user_id` | string | ❌ | `"quick_user"` | Identificador del usuario (solo para logs) |
 | `model_id` | string | ❌ | `null` | Modelo a usar. Si `null`, usa el cargado actualmente en el Engine. |
 
 **Respuesta: stream NDJSON**
@@ -380,7 +372,7 @@ const response = await fetch("http://localhost:8000/api/quick", {
     "Content-Type": "application/json",
     "x-client-key": "mi_clave_quick"
   },
-  body: JSON.stringify({ text: "Pon un timer de 5 minutos", user_id: "voice" })
+  body: JSON.stringify({ text: "Pon un timer de 5 minutos" })
 });
 
 const reader = response.body.getReader();
@@ -413,22 +405,17 @@ speakTTS(buffer); // Reproducir respuesta acumulada
 
 Para clientes de tipo `chat`. Conversación persistente multi-turno con streaming de tokens en tiempo real.
 
-### `WebSocket /api/chat/ws/{user_id}`
+### `WebSocket /api/chat/ws`
 
-**Descripción:** Conexión WebSocket persistente para chat en tiempo real. Soporta conversaciones multi-turno, cambio de modelo mid-session y ejecución de herramientas.
+**Descripción:** Conexión WebSocket persistente para chat en tiempo real. Soporta conversaciones multi-turno, cambio de modelo mid-session y ejecución de herramientas. La identidad del cliente se resuelve desde la `x-client-key`.
 
 **URL de conexión:**
 ```
-ws://host:port/api/chat/ws/{user_id}
+ws://host:port/api/chat/ws
   ?conversation_id=conv-uuid-1234    (opcional — retoma conversación existente)
   ?model_id=llama-3-8b-instruct      (opcional — modelo a usar)
   &x_client_key=<tu_clave>           (o via header x-client-key)
 ```
-
-**Parámetros de ruta:**
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `user_id` | string | Identificador del usuario |
 
 **Query params:**
 | Parámetro | Tipo | Requerido | Descripción |
@@ -451,7 +438,7 @@ APERTURA
   ├─ Validación client_type != "quick"       → close(4003) si es quick
   ├─ Verificación Engine disponible          → close(1011) si no disponible
   ├─ Gestión de conversación                 → create_conversation() si no hay conversation_id
-  ├─ ensure_session()                        → cierra sesión previa del user_id si existía
+  ├─ ensure_session(client_id)              → cierra sesión previa del cliente si existía
   ├─ get_conversation_messages() + set_context() → inyecta historial en el Engine
   └─ websocket.accept()                      → conexión lista
 
@@ -460,7 +447,7 @@ BUCLE DE MENSAJES
   └─ Recibir JSON con "type" → mensaje de control (ver abajo)
 
 CIERRE
-  └─ release_session(user_id)
+  └─ release_session(client_id)
 ```
 
 #### Protocolo de mensajes
@@ -503,7 +490,7 @@ CIERRE
 
 ```javascript
 const ws = new WebSocket(
-  `ws://localhost:8000/api/chat/ws/usuario1` +
+  `ws://localhost:8000/api/chat/ws` +
   `?conversation_id=conv-uuid-1234` +
   `&x_client_key=mi_clave_chat`
 );
@@ -544,7 +531,7 @@ ws.onclose = (e) => console.log(`Cerrado: código ${e.code}`);
 - Al abrirse la conexión, el Orchestrator **recupera automáticamente** el historial de la `conversation_id` desde JotaDB e inyecta los mensajes como contexto en el InferenceEngine.
 - Cada mensaje de usuario y cada respuesta del asistente se **persisten automáticamente** en JotaDB.
 - Si la inferencia se interrumpe por desconexión abrupta, la respuesta parcial se guarda con el sufijo `[INTERRUPTED]`.
-- El InferenceEngine mantiene **una sesión activa por `user_id`** a la vez. Abrir una nueva conexión para el mismo `user_id` cierra la sesión anterior.
+- El InferenceEngine mantiene **una sesión activa por `client_id`** a la vez. Abrir una nueva conexión con el mismo cliente cierra la sesión anterior.
 
 ---
 

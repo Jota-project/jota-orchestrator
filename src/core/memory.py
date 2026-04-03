@@ -258,7 +258,6 @@ class MemoryManager:
     async def save_message(
         self,
         conversation_id: str,
-        user_id: str,
         role: Literal["user", "assistant", "system", "tool"],
         content: str,
         client_id: Any,
