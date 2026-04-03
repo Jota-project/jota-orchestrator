@@ -43,7 +43,7 @@ class InferenceClient(InferenceConnectionMixin, InferenceSessionMixin):
         self.lock = asyncio.Lock()
         
         self.active_sessions: Dict[str, str] = {}
-        self._user_sessions: Dict[str, str] = {}  # user_id -> session_id tracking
+        self._user_sessions: Dict[str, str] = {}  # client_id -> session_id tracking
         self._response_queues: Dict[str, asyncio.Queue] = {}
         self._pending_sessions: Dict[str, asyncio.Future] = {}
         self._pending_commands: Dict[str, asyncio.Future] = {}
@@ -135,9 +135,8 @@ class InferenceClient(InferenceConnectionMixin, InferenceSessionMixin):
         session_id: str,
         prompt: str,
         conversation_id: str,
-        user_id: str,
         params: Optional[Dict[str, Any]] = None,
-        client_id: int = None,
+        client_id: Any = None,
         model_id: Optional[str] = None,
         persist_messages: bool = True,
     ) -> AsyncGenerator[Any, None]:
@@ -252,7 +251,6 @@ class InferenceClient(InferenceConnectionMixin, InferenceSessionMixin):
                     if persist_messages:
                         await self.memory_manager.save_message(
                             conversation_id=conversation_id,
-                            user_id=user_id,
                             role="assistant",
                             content=full_text,
                             client_id=client_id,
@@ -273,14 +271,13 @@ class InferenceClient(InferenceConnectionMixin, InferenceSessionMixin):
                 if persist_messages:
                     await self.memory_manager.save_message(
                         conversation_id=conversation_id,
-                        user_id=user_id,
                         role="assistant",
                         content=partial_response,
                         client_id=client_id,
                         metadata={"model_id": model_id, "interrupted": True} if model_id else {"interrupted": True},
                     )
-            
-            await self.memory_manager.mark_conversation_error(conversation_id, user_id)
+
+            await self.memory_manager.mark_conversation_error(conversation_id, client_id)
             raise e
         finally:
              if session_id in self._response_queues:

@@ -91,7 +91,7 @@ app.add_middleware(
 )
 
 # Route layout:
-#   /api/chat  → WebSocket only  (ws://host/api/chat/ws/{user_id})
+#   /api/chat  → WebSocket only  (ws://host/api/chat/ws)
 #   /api/quick → HTTP NDJSON     (POST http://host/api/quick)
 #   /api/*     → REST data & config (models, conversations, settings…)
 app.include_router(chat_router, prefix="/api")

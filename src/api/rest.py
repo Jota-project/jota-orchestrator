@@ -10,8 +10,8 @@ incluídos aquí.
 
 Rutas base (todas bajo el prefijo /api definido en main.py):
   GET    /api/models
-  GET    /api/conversations/{user_id}
-  GET    /api/conversations/{user_id}/{conversation_id}/messages
+  GET    /api/conversations
+  GET    /api/conversations/{conversation_id}/messages
   PATCH  /api/conversations/{conversation_id}/model
 """
 from fastapi import APIRouter, Query, Header, HTTPException
@@ -63,11 +63,10 @@ async def get_models(
 # ===========================================================================
 
 @router.get(
-    "/conversations/{user_id}",
-    summary="Lista las últimas N conversaciones de un usuario",
+    "/conversations",
+    summary="Lista las últimas N conversaciones del cliente autenticado",
 )
 async def get_conversations(
-    user_id: str,
     x_client_key: str = Header(..., description="Client authentication key"),
     limit: int = Query(10, ge=1, le=100, description="Número de conversaciones a devolver"),
 ):
@@ -78,16 +77,15 @@ async def get_conversations(
         conversations = await memory_manager.get_user_conversations(client_id, limit=limit)
         return {"status": "success", "conversations": conversations}
     except Exception as e:
-        logger.error(f"Error listing conversations for {user_id}: {e}")
+        logger.error(f"Error listing conversations for client {client_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get(
-    "/conversations/{user_id}/{conversation_id}/messages",
+    "/conversations/{conversation_id}/messages",
     summary="Devuelve los mensajes de una conversación",
 )
 async def get_conversation_messages(
-    user_id: str,
     conversation_id: str,
     x_client_key: str = Header(..., description="Client authentication key"),
     limit: int = Query(50, ge=1, le=1000, description="Número de mensajes a devolver"),

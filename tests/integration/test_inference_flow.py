@@ -36,7 +36,6 @@ async def test_full_inference_flow(mock_server, mock_memory_manager):
         async for token in client.infer(
             session_id, prompt,
             conversation_id="conv_test_1",
-            user_id="user_test_1"
         ):
             received_tokens.append(token)
 
@@ -60,21 +59,20 @@ async def test_concurrent_sessions(mock_server, mock_memory_manager):
     connected = await client.verify_connection(timeout=5.0)
     assert connected
 
-    async def run_session(user_id):
+    async def run_session(client_id):
         session_id = await client.create_session()
         tokens = []
         async for token in client.infer(
             session_id, "prompt",
-            conversation_id=f"conv_{user_id}",
-            user_id=user_id
+            conversation_id=f"conv_{client_id}",
         ):
             tokens.append(token)
         return "".join(tokens)
 
     results = await asyncio.gather(
-        run_session("user_1"),
-        run_session("user_2"),
-        run_session("user_3")
+        run_session("client_1"),
+        run_session("client_2"),
+        run_session("client_3")
     )
 
     for res in results:

@@ -13,8 +13,8 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.websocket("/chat/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+@router.websocket("/chat/ws")
+async def websocket_endpoint(websocket: WebSocket):
     """
     Handles a full WebSocket chat session.
 
@@ -24,40 +24,36 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     3. Ensure an Ephemeral Session on the Inference Center.
     4. Recover database context and inject it.
     5. Listen to text inputs and control streams via JSON envelopes.
-
-    Args:
-        websocket: The active WebSocket connection.
-        user_id: The ID of the connecting user.
     """
     # 1. Authentication
     # Allow passing auth token via query params for simpler WebSocket clients
     client_key = websocket.headers.get("x-client-key") or websocket.query_params.get("x_client_key") or websocket.query_params.get("client_key")
     if not client_key:
-        logger.warning(f"Missing Client Key header or query param for user {user_id}")
+        logger.warning("Missing Client Key header or query param")
         await websocket.close(code=4001, reason="Unauthorized")
         return
-        
+
     client_data = await memory_manager.validate_client_key(client_key)
     if not client_data:
-        logger.warning(f"Unauthorized access attempt for user {user_id}")
+        logger.warning("Unauthorized access attempt")
         await websocket.close(code=4001, reason="Unauthorized")
         return
-        
+
     # 2. Validar tipo de cliente
     client_type = client_data.get("client_type", "CHAT")
     if client_type == "QUICK":
         logger.warning(f"QUICK client {client_data['id']} attempted WS connection")
         await websocket.close(code=4003, reason="Client type 'QUICK' not allowed on WebSocket")
         return
-        
+
     client_id = client_data["id"]
 
     await websocket.accept()
-    logger.info(f"WebSocket connected for user {user_id}")
+    logger.info(f"WebSocket connected for client {client_id}")
 
     # Fail fast if Engine is not connected
     if not inference_client.is_connected:
-        logger.error(f"Inference Engine not connected — closing WS for {user_id}")
+        logger.error(f"Inference Engine not connected — closing WS for client {client_id}")
         await websocket.send_text(_json.dumps({
             "type": "error",
             "message": "Inference Engine no disponible. Intenta de nuevo en unos segundos."
@@ -76,7 +72,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             conversation_id = conversation["id"]
             logger.info(
                 f"[TRACE][Conv: {conversation_id}] New conversation created "
-                f"for user={user_id} model_id={model_id!r}"
+                f"for client={client_id} model_id={model_id!r}"
             )
         elif model_id:
             # Client reconnected with an existing conversation and a new model_id.
@@ -94,7 +90,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             )
 
         # 3. Ephemeral Session (aborts previous if exists)
-        session_id = await inference_client.ensure_session(user_id)
+        session_id = await inference_client.ensure_session(client_id)
 
         # 4. Recover context from DB and inject into session
         context = await memory_manager.get_conversation_messages(conversation_id, client_id)
@@ -158,7 +154,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             # 5. Save User Message (text prompt)
             await memory_manager.save_message(
                 conversation_id=conversation_id,
-                user_id=user_id,
                 role="user",
                 content=data,
                 client_id=client_id
@@ -168,7 +163,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 "content": data,
                 "session_id": session_id,
                 "conversation_id": conversation_id,
-                "user_id": user_id,
                 "client_id": client_id,
                 "model_id": model_id,
                 "source": "websocket"
@@ -189,12 +183,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     await websocket.send_text(_json.dumps({"type": "token", "content": token}))
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for user {user_id}")
+        logger.info(f"WebSocket disconnected for client {client_id}")
 
     except Exception as e:
-        logger.error(f"WebSocket error for user {user_id}: {e}")
+        logger.error(f"WebSocket error for client {client_id}: {e}")
         await websocket.close(code=1011)
 
     finally:
         # Always release session on any exit path
-        await inference_client.release_session(user_id)
+        await inference_client.release_session(client_id)
