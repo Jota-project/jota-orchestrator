@@ -34,6 +34,7 @@ def mock_tools():
         yield mock
 
 
+@pytest.mark.asyncio
 async def test_system_prompt_extra_appended_when_provided(mock_inference, mock_tools):
     from src.api.quick import _quick_stream_generator
 
@@ -51,6 +52,7 @@ async def test_system_prompt_extra_appended_when_provided(mock_inference, mock_t
     assert "responde siempre en inglés" in call_kwargs["params"]["system_prompt"]
 
 
+@pytest.mark.asyncio
 async def test_system_prompt_extra_not_present_when_none(mock_inference, mock_tools):
     from src.api.quick import _quick_stream_generator, QUICK_SYSTEM_PROMPT
 
@@ -69,6 +71,7 @@ async def test_system_prompt_extra_not_present_when_none(mock_inference, mock_to
     assert system_prompt.strip().startswith(QUICK_SYSTEM_PROMPT.strip())
 
 
+@pytest.mark.asyncio
 async def test_system_prompt_extra_empty_string_ignored(mock_inference, mock_tools):
     from src.api.quick import _quick_stream_generator, QUICK_SYSTEM_PROMPT
 
