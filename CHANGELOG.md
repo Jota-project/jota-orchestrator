@@ -1,3 +1,12 @@
+# [1.1.0](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.3...v1.1.0) (2026-04-05)
+
+
+### Features
+
+* QuickRequest accepts system_prompt_extra — appended to system prompt ([20b024b](https://github.com/Jota-project/jota-orchestrator/commit/20b024b6e827764caf8022c60afc4dec7afa8013))
+* QuickRequest accepts system_prompt_extra ([#16](https://github.com/Jota-project/jota-orchestrator/issues/16)) ([d182e14](https://github.com/Jota-project/jota-orchestrator/commit/d182e149167b26faa8b7fbc971dba4fe7327655b))
+* QuickRequest acepta system_prompt_extra ([#18](https://github.com/Jota-project/jota-orchestrator/issues/18)) ([5d1f7f2](https://github.com/Jota-project/jota-orchestrator/commit/5d1f7f2462ac44361f768a23185430d99a6760d3))
+
 ## [1.0.3](https://github.com/Jota-project/jota-orchestrator/compare/v1.0.2...v1.0.3) (2026-04-02)
 
 
