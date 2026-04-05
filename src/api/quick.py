@@ -44,13 +44,15 @@ class QuickRequest(BaseModel):
     """Petición para el endpoint QUICK."""
     text: str
     model_id: Optional[str] = None
+    system_prompt_extra: Optional[str] = None
 
 
 async def _quick_stream_generator(
     client_id: str,
     session_id: str,
     text: str,
-    model_id: Optional[str]
+    model_id: Optional[str],
+    system_prompt_extra: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Generador que emite líneas JSON (NDJSON) con tokens de texto y metadatos."""
     
@@ -61,6 +63,8 @@ async def _quick_stream_generator(
     full_prompt = f"{QUICK_SYSTEM_PROMPT}\n"
     if tool_instructions:
         full_prompt += f"\n{tool_instructions}\n"
+    if system_prompt_extra:
+        full_prompt += f"\n{system_prompt_extra}\n"
 
     # Parámetros optimizados para respuestas cortas (primera pasada)
     quick_params = {
@@ -202,6 +206,7 @@ async def quick_endpoint(
             session_id=session_id,
             text=request.text,
             model_id=request.model_id,
+            system_prompt_extra=request.system_prompt_extra,
         ),
         media_type="application/x-ndjson"
     )
