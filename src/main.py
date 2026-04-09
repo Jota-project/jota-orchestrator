@@ -2,80 +2,83 @@ from fastapi import FastAPI, Response, status
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import sys
+
 from src.core.config import settings
 from src.api.chat import router as chat_router
 from src.api.quick import router as quick_router
-from src.core.services import inference_client, memory_manager, shutdown_services
+from src.core.services import (
+    memory_manager,
+    config_manager,
+    provider_manager,
+    shutdown_services,
+)
 
-# Configure root logger so all src.* loggers propagate to the console.
-# Gunicorn only sets up gunicorn.*/uvicorn.* loggers; without this,
-# all application-level logs are silently dropped.
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:     %(name)s - %(message)s",
 )
-
 logger = logging.getLogger("uvicorn")
+
+_MAX_STARTUP_RETRIES = 5
+_STARTUP_RETRY_BASE_DELAY = 2  # seconds
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     logger.info("=" * 60)
     logger.info("🚀 INICIANDO JOTA ORCHESTRATOR")
     logger.info("=" * 60)
-    
-    # 1. Verify JotaDB Connection with Authentication
-    logger.info("📊 Verificando conexión con JotaDB...")
-    logger.info(f"   └─ URL: {settings.JOTA_DB_URL}")
-    try:
-        db_connected = await memory_manager.verify_connection()
-        if db_connected:
-            logger.info("✅ JotaDB: CONECTADO y AUTENTICADO correctamente")
-        else:
-            logger.error("❌ JotaDB: FALLO en la conexión o autenticación")
-            logger.error("   └─ El servicio continuará pero la funcionalidad estará limitada")
-    except Exception as e:
-        logger.error(f"❌ JotaDB: ERROR al verificar conexión - {e}")
-    
-    logger.info("")  # Línea en blanco para separar
-    
-    # 2. Connect to Inference Service with Authentication
-    logger.info("🧠 Conectando con Inference Engine...")
-    logger.info(f"   └─ URL: {settings.INFERENCE_SERVICE_URL}")
-    logger.info(f"   └─ Orchestrator ID: {settings.ORCHESTRATOR_ID}")
-    try:
-        # Iniciar el loop de conexión
-        await inference_client.connect()
-        
-        # Esperar a que se autentique (con timeout)
-        inference_connected = await inference_client.verify_connection()
-        
-        if inference_connected:
-            logger.info("✅ Inference Engine: CONECTADO y AUTENTICADO correctamente")
-        else:
-            logger.warning("⚠️  Inference Engine: Conexión en progreso (reintentando en segundo plano)")
-    except Exception as e:
-        logger.warning(f"⚠️  Inference Engine: Conexión inicial fallida (reintentando en segundo plano) - {e}")
-    
-    logger.info("")  # Línea en blanco
+
+    for attempt in range(1, _MAX_STARTUP_RETRIES + 1):
+        try:
+            logger.info(f"📊 Cargando configuración desde JotaDB (intento {attempt}/{_MAX_STARTUP_RETRIES})...")
+
+            # 1. Verify DB connection
+            if not await memory_manager.verify_connection():
+                raise RuntimeError("JotaDB connection or authentication failed")
+
+            # 2. Load orchestrator config (blocking)
+            await config_manager.load()
+            logger.info(f"✅ Config cargada — default_provider={config_manager.config.default_provider_id!r}")
+
+            # 3. Load providers and initialize adapters (blocking)
+            providers = await memory_manager.get_providers()
+            if not providers:
+                raise RuntimeError("No active providers returned from JotaDB")
+
+            await provider_manager.init(
+                providers=providers,
+                default_provider_id=config_manager.config.default_provider_id,
+            )
+            logger.info(f"✅ {len(providers)} provider(s) registrado(s)")
+            break
+
+        except Exception as e:
+            if attempt == _MAX_STARTUP_RETRIES:
+                logger.error(f"❌ Startup failed after {_MAX_STARTUP_RETRIES} attempts: {e}")
+                sys.exit(1)
+            delay = _STARTUP_RETRY_BASE_DELAY ** attempt
+            logger.warning(f"⚠️  Startup attempt {attempt} failed: {e}. Retrying in {delay}s...")
+            await asyncio.sleep(delay)
 
     logger.info("=" * 60)
     logger.info("✨ JotaOrchestrator listo para recibir peticiones")
     logger.info("=" * 60)
 
     yield
-    
-    # Shutdown
+
     logger.info("🛑 Cerrando servicios...")
     await shutdown_services()
     logger.info("👋 JotaOrchestrator detenido")
+
 
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title=settings.APP_NAME,
     debug=settings.DEBUG,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 _cors_origins = settings.CORS_ORIGINS
@@ -89,9 +92,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Route layout:
-#   /api/chat  → WebSocket only  (ws://host/api/chat/ws)
-#   /api/quick → HTTP NDJSON     (POST http://host/api/quick)
 app.include_router(chat_router, prefix="/api")
 app.include_router(quick_router, prefix="/api")
 
@@ -101,30 +101,31 @@ async def root():
     return {
         "message": f"Welcome to {settings.APP_NAME}",
         "environment": settings.APP_ENV,
-        "status": "online"
+        "status": "online",
     }
+
 
 @app.get("/health")
 async def health_check(response: Response):
     """
-    Deep Health Check.
-    Verifies connectivity to JotaDB and Inference Engine.
+    Deep Health Check. Verifies JotaDB and all registered providers.
     """
-    inference_status = await inference_client.check_health()
-    memory_status = await memory_manager.check_health()
-    
-    status_code = status.HTTP_200_OK
-    if not inference_status or not memory_status:
-        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        response.status_code = status_code
+    db_ok = await memory_manager.check_health()
+    provider_health = await provider_manager.check_health()
+
+    all_ok = db_ok and all(provider_health.values())
+
+    if not all_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return {
-        "status": "ok" if status_code == 200 else "degraded",
+        "status": "ok" if all_ok else "degraded",
         "components": {
-            "inference_engine": "connected" if inference_status else "disconnected",
-            "jota_db": "connected" if memory_status else "disconnected"
-        }
+            "jota_db": "connected" if db_ok else "disconnected",
+            "providers": {pid: ("ok" if ok else "degraded") for pid, ok in provider_health.items()},
+        },
     }
+
 
 if __name__ == "__main__":
     import uvicorn
