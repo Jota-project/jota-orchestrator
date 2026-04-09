@@ -122,7 +122,7 @@ class MemoryManager:
             logger.error(f"Error validating client key: {e}")
             return False
 
-    async def create_conversation(self, client_id: Any, model_id: Optional[str] = None) -> Dict[str, Any]:
+    async def create_conversation(self, client_id: Any, model_id: Optional[str] = None, provider_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Creates a new conversation in JotaDB.
         Optionally links it to a specific model via model_id.
@@ -138,6 +138,8 @@ class MemoryManager:
             payload: Dict[str, Any] = {"client_id": client_id, "status": "active"}
             if model_id:
                 payload["model_id"] = model_id
+            if provider_id:
+                payload["provider_id"] = provider_id
 
             create_response = await self.client.post(
                 f"{self.base_url}/chat/conversations",
@@ -295,6 +297,67 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Failed to save message to JotaDB: {e}")
 
+            
+    async def get_orchestrator_config(self) -> dict:
+        """
+        Fetches orchestrator service-config from JotaDB internal endpoint.
+        Returns a flat dict {key: value} parsed from the list response.
+        Returns empty dict on error.
+        """
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/internal/service-config/{settings.ORCHESTRATOR_ID}",
+                headers={
+                    **self.base_headers,
+                    "X-API-Key": settings.ORCHESTRATOR_API_KEY,
+                },
+            )
+            response.raise_for_status()
+            raw = response.json()
+            return {item["key"]: item["value"] for item in raw}
+        except Exception as e:
+            logger.error(f"Failed to fetch orchestrator config: {e}")
+            return {}
+
+    async def get_providers(self) -> list[dict]:
+        """
+        Fetches active InferenceProviders from JotaDB internal endpoint.
+        Returns empty list on error.
+        """
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/internal/providers",
+                headers={
+                    **self.base_headers,
+                    "X-API-Key": settings.ORCHESTRATOR_API_KEY,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch providers: {e}")
+            return []
+
+    async def get_client_config(self, client_id: str) -> dict | None:
+        """
+        Fetches ClientConfig for a given client from JotaDB internal endpoint.
+        Returns None if not found or on error.
+        """
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/internal/client-config/{client_id}",
+                headers={
+                    **self.base_headers,
+                    "X-API-Key": settings.ORCHESTRATOR_API_KEY,
+                },
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch client config for {client_id}: {e}")
+            return None
 
     async def mark_conversation_error(self, conversation_id: str, client_id: Any):
          """
