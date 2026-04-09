@@ -65,38 +65,30 @@ async def websocket_endpoint(websocket: WebSocket):
         # 2. Conversation Management
         conversation_id = websocket.query_params.get("conversation_id")
         model_id = websocket.query_params.get("model_id") or None
+        provider_id = websocket.query_params.get("provider_id") or None
         if not conversation_id:
             conversation = await memory_manager.create_conversation(
-                client_id=client_id, model_id=model_id
+                client_id=client_id,
+                model_id=model_id,
+                provider_id=provider_id,
             )
             conversation_id = conversation["id"]
             logger.info(
                 f"[TRACE][Conv: {conversation_id}] New conversation created "
                 f"for client={client_id} model_id={model_id!r}"
             )
-        elif model_id:
-            # Client reconnected with an existing conversation and a new model_id.
-            # switch_model atomically loads in engine + updates DB.
-            logger.info(
-                f"[TRACE][Conv: {conversation_id}] Reconnect with model change — "
-                f"engine_current={inference_client.current_engine_model!r} "
-                f"→ requested={model_id!r}. Calling switch_model."
-            )
-            await jota_controller.switch_model(conversation_id, client_id, model_id)
-        else:
-            logger.info(
-                f"[TRACE][Conv: {conversation_id}] Reconnect without model change "
-                f"(engine_current={inference_client.current_engine_model!r})."
+        elif model_id or provider_id:
+           # Update conversation model/provider in DB
+            update: dict = {}
+            if model_id:
+                update["model_id"] = model_id
+            if provider_id:
+                update["provider_id"] = provider_id
+            await memory_manager.set_conversation_model(
+                conversation_id, client_id, model_id or ""
             )
 
-        # 3. Ephemeral Session (aborts previous if exists)
-        session_id = await inference_client.ensure_session(client_id)
-
-        # 4. Recover context from DB and inject into session
-        context = await memory_manager.get_conversation_messages(conversation_id, client_id)
-        await inference_client.set_context(session_id, context)
-
-        log_prefix = f"[Conv: {conversation_id}][Sess: {session_id}]"
+        log_prefix = f"[Conv: {conversation_id}]"
         logger.info(f"{log_prefix} Session ready. Waiting for messages...")
 
         while True:
@@ -112,79 +104,54 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     if msg_type == "switch_model":
                         new_model = ctrl.get("model_id", "").strip()
+                        new_provider = ctrl.get("provider_id", "").strip() or None
                         if not new_model:
                             await websocket.send_text(_json.dumps({
                                 "type": "error",
-                                "message": "switch_model requires a non-empty model_id"
+                                "message": "switch_model requires a non-empty model_id",
                             }))
                             continue
-                        logger.info(
-                            f"{log_prefix} [TRACE] Mid-session switch_model requested: "
-                            f"{model_id!r} → {new_model!r}"
+                        await memory_manager.set_conversation_model(
+                            conversation_id, client_id, new_model
                         )
-                        try:
-                            await jota_controller.switch_model(conversation_id, client_id, new_model)
-                            model_id = new_model  # update local var for next infer
-                            await websocket.send_text(_json.dumps({
-                                "type": "model_switched",
-                                "model_id": new_model
-                            }))
-                            logger.info(
-                                f"{log_prefix} [TRACE] switch_model OK mid-session — "
-                                f"new engine_current={inference_client.current_engine_model!r}"
-                            )
-                        except Exception as sw_err:
-                            logger.error(f"{log_prefix} switch_model failed: {sw_err}")
-                            await websocket.send_text(_json.dumps({
-                                "type": "error",
-                                "message": str(sw_err)
-                            }))
-                        continue  # don't treat this as a prompt
+                        await websocket.send_text(_json.dumps({
+                            "type": "model_switched",
+                            "model_id": new_model,
+                        }))
+                        continue
 
-                    # Unknown control type — log and ignore
-                    logger.warning(f"{log_prefix} Unknown control message type: {msg_type!r}")
+                    logger.warning(f"{log_prefix} Unknown control type: {msg_type!r}")
                     await websocket.send_text(_json.dumps({
                         "type": "error",
-                        "message": f"Unknown control type: {msg_type!r}"
+                        "message": f"Unknown control type: {msg_type!r}",
                     }))
                     continue
             except _json.JSONDecodeError:
-                pass  # plain text prompt — fall through
+                pass  # plain text prompt
 
-            # 5. Save User Message (text prompt)
+            # Save user message
             await memory_manager.save_message(
                 conversation_id=conversation_id,
                 role="user",
                 content=data,
-                client_id=client_id
+                client_id=client_id,
             )
 
             payload = {
                 "content": data,
-                "session_id": session_id,
                 "conversation_id": conversation_id,
                 "client_id": client_id,
-                "model_id": model_id,
-                "source": "websocket"
             }
 
-            logger.info(
-                f"{log_prefix} [TRACE] Dispatching to controller — "
-                f"db_model={model_id!r} engine_model={inference_client.current_engine_model!r}"
-            )
-
-            # 6. Stream tokens back
+            # Stream tokens back
             async for token in jota_controller.handle_input(payload):
                 if isinstance(token, dict):
-                    # Structured control message (e.g. status indicator)
                     await websocket.send_text(_json.dumps(token))
                 else:
-                    # Plain text content token
                     await websocket.send_text(_json.dumps({"type": "token", "content": token}))
-            
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for client {client_id}")
-
     except Exception as e:
         logger.error(f"WebSocket error for client {client_id}: {e}")
         await websocket.close(code=1011)
