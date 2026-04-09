@@ -8,34 +8,35 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.core.events import event_bus
-from src.services.inference import InferenceClient
-
-from .models import JotaModelMixin
 from .input import JotaInputMixin
 
 if TYPE_CHECKING:
     from src.core.memory import MemoryManager
+    from src.core.config_manager import ConfigManager
+    from src.services.providers import ProviderManager
 
 logger = logging.getLogger(__name__)
 
-class JotaController(JotaModelMixin, JotaInputMixin):
+class JotaController(JotaInputMixin):
     """
     Controlador principal del Orchestrator.
 
     Args:
-        inference_client: Cliente WebSocket con el InferenceCenter.
-        memory_manager:   Acceso a JotaDB para leer metadatos de conversaciones.
+        provider_manager: Gestiona los adapters de inferencia por provider.
+        memory_manager:   Acceso a JotaDB.
+        config_manager:   Configuración del orchestrator cargada desde DB.
     """
-
-    def __init__(self, inference_client: InferenceClient, memory_manager: "MemoryManager"):
-        self.inference_client = inference_client
+    def __init__(
+        self,
+        provider_manager: "ProviderManager",
+        memory_manager: "MemoryManager",
+        config_manager: "ConfigManager",
+    ):
+        self.provider_manager = provider_manager
         self.memory_manager = memory_manager
-        # Suscribir al event_bus para procesamiento desacoplado
+        self.config_manager = config_manager
         event_bus.subscribe(self.process_event_async)
 
     async def process_event_async(self, event: dict):
-        """
-        Wrapper para el event_bus: drena el generator de handle_input.
-        """
         async for _ in self.handle_input(event):
             pass

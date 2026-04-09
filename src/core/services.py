@@ -1,21 +1,25 @@
 import logging
 from src.core.memory import MemoryManager
-from src.services.inference import InferenceClient
+from src.core.config_manager import ConfigManager
+from src.services.providers import ProviderManager
 from src.core.controller import JotaController
 import src.tools  # noqa: F401 — triggers @tool decorator registrations
 
 logger = logging.getLogger(__name__)
 
-# Instantiate Singleton Services
+# Singleton services — initialized at import time.
+# provider_manager and config_manager are populated during lifespan startup.
 memory_manager = MemoryManager()
-inference_client = InferenceClient(memory_manager=memory_manager)
-jota_controller = JotaController(inference_client=inference_client, memory_manager=memory_manager)
+config_manager = ConfigManager(memory_manager=memory_manager)
+provider_manager = ProviderManager()
+jota_controller = JotaController(
+    provider_manager=provider_manager,
+    memory_manager=memory_manager,
+    config_manager=config_manager,
+)
+
 
 async def shutdown_services():
-    """
-    Graceful shutdown of all services.
-    """
     logger.info("Shutting down services...")
-    await inference_client.invoke_shutdown()
     await memory_manager.close()
     logger.info("Services shut down.")
