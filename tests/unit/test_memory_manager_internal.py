@@ -11,9 +11,10 @@ def manager():
         mock_cfg.JOTA_DB_TIMEOUT = 10.0
         mock_cfg.SSL_VERIFY = True
         mock_cfg.ORCHESTRATOR_ID = "jota_orchestrator"
+        mock_cfg.ORCHESTRATOR_API_KEY = "test_api_key"
         m = MemoryManager()
         m.mock_cfg = mock_cfg
-    return m
+        yield m
 
 
 @pytest.mark.asyncio
