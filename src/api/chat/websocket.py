@@ -6,7 +6,7 @@ applications, allowing real-time token streaming, mid-session control
 messages (e.g., model switching), and context management over a single connection.
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from src.core.services import jota_controller, memory_manager, inference_client
+from src.core.services import jota_controller, memory_manager
 import json as _json
 import logging
 
@@ -21,7 +21,6 @@ async def websocket_endpoint(websocket: WebSocket):
     Performs sequential actions:
     1. Authenticate client connection.
     2. Manage or create conversation context.
-    3. Ensure an Ephemeral Session on the Inference Center.
     4. Recover database context and inject it.
     5. Listen to text inputs and control streams via JSON envelopes.
     """
@@ -51,16 +50,6 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info(f"WebSocket connected for client {client_id}")
 
-    # Fail fast if Engine is not connected
-    if not inference_client.is_connected:
-        logger.error(f"Inference Engine not connected — closing WS for client {client_id}")
-        await websocket.send_text(_json.dumps({
-            "type": "error",
-            "message": "Inference Engine no disponible. Intenta de nuevo en unos segundos."
-        }))
-        await websocket.close(code=1011, reason="Inference Engine not connected")
-        return
-    
     try:
         # 2. Conversation Management
         conversation_id = websocket.query_params.get("conversation_id")
@@ -156,6 +145,3 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error for client {client_id}: {e}")
         await websocket.close(code=1011)
 
-    finally:
-        # Always release session on any exit path
-        await inference_client.release_session(client_id)
