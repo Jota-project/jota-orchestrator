@@ -9,12 +9,18 @@ import json as _json
 import time as _time
 from typing import AsyncGenerator, TYPE_CHECKING
 
+from src.services.providers.types import (
+    InferRequest, TextDelta, ToolCallEvent, ErrorEvent, DoneEvent,
+)
+
 if TYPE_CHECKING:
     from src.core.memory import MemoryManager
     from src.core.config_manager import ConfigManager
     from src.services.providers import ProviderManager
 
 logger = logging.getLogger(__name__)
+
+from src.core.tool_manager import tool_manager
 
 
 class JotaInputMixin:
@@ -24,9 +30,11 @@ class JotaInputMixin:
         Main inference flow:
           1. Resolve provider + model for this conversation.
           2. Build messages array (system + history + user).
-          3. Stream tokens from provider adapter.
-          4. Handle tool calls: execute, save, re-infer.
-          5. Persist assistant response to DB.
+          3. Build InferRequest — tools delivered natively or via XML in system prompt,
+             depending on adapter.capabilities.tool_format.
+          4. Stream events from provider adapter.
+          5. Handle tool calls: execute, save, re-infer.
+          6. Persist assistant response to DB.
         """
         content = payload.get("content")
         conversation_id = payload.get("conversation_id")
@@ -48,15 +56,17 @@ class JotaInputMixin:
             )
             adapter = self.provider_manager.get_adapter(provider_id)
 
-            # 2. Build system prompt
-            from src.core.tool_manager import tool_manager
-            tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
+            # 2. Resolve tools
+            tools = tool_manager.get_typed_tool_schemas(client_id=client_id)
+
+            # 3. Build system prompt
             base_prompt = system_prompt_override or self.config_manager.config.system_prompt
             system_prompt = base_prompt
-            if tool_instructions:
-                system_prompt += "\n\n" + tool_instructions
+            # XML providers receive tool instructions in the system prompt instead of as API params
+            if adapter.capabilities.tool_format == "xml" and tools:
+                system_prompt += "\n\n" + tool_manager.get_system_prompt_addition(client_id=client_id)
 
-            # 3. Build messages array
+            # 4. Build messages array
             messages = [{"role": "system", "content": system_prompt}]
             if not stateless:
                 history = await self.memory_manager.get_conversation_messages(
@@ -65,20 +75,26 @@ class JotaInputMixin:
                 messages.extend(history)
             messages.append({"role": "user", "content": content})
 
-            infer_params = {"temp": 0.7}
+            # 5. Build InferRequest
+            request = InferRequest(
+                messages=messages,
+                model=model_id,
+                # Native providers receive tools as API params; XML providers receive None here
+                tools=tools if adapter.capabilities.tool_format == "native" else None,
+                temperature=0.7,
+            )
 
-            # 4. First inference pass
+            # 6. First inference pass
             tool_executed = False
             pre_tool_thinking: list[str] = []
             response_buffer: list[str] = []
 
-            async for token in adapter.infer(messages, model_id, infer_params):
-                if isinstance(token, dict) and token.get("type") == "tool_call":
-                    tc_payload = token.get("payload", {})
-                    tool_name = tc_payload.get("name")
-                    tool_args = tc_payload.get("arguments", {})
+            async for event in adapter.infer(request):
+                if isinstance(event, ToolCallEvent):
+                    tool_name = event.name
+                    tool_args = event.arguments
 
-                    # Save pre-tool thinking to DB (not shown to user)
+                    # Save pre-tool thinking to DB (not streamed to user)
                     if pre_tool_thinking and not stateless:
                         thinking_text = "".join(pre_tool_thinking)
                         await self.memory_manager.save_message(
@@ -123,12 +139,21 @@ class JotaInputMixin:
                             )
                         yield {"type": "status", "content": f"Error al ejecutar {tool_name}: {e}"}
                         tool_executed = True
-                else:
-                    if not tool_executed:
-                        pre_tool_thinking.append(token)
-                        response_buffer.append(token)
 
-            # Flush buffered thinking if no tool call happened
+                elif isinstance(event, TextDelta):
+                    if not tool_executed:
+                        pre_tool_thinking.append(event.content)
+                        response_buffer.append(event.content)
+
+                elif isinstance(event, ErrorEvent):
+                    logger.error(f"Provider error during first pass: {event.message}")
+                    yield f" [Error: {event.message}]"
+                    return
+
+                elif isinstance(event, DoneEvent):
+                    break
+
+            # No tool call — flush buffered text to client and save
             if not tool_executed:
                 for chunk in pre_tool_thinking:
                     yield chunk
@@ -143,7 +168,7 @@ class JotaInputMixin:
                     )
                 return
 
-            # 5. Re-inference after tool execution
+            # 7. Re-inference after tool execution
             yield {"type": "status", "content": "Analizando resultados..."}
 
             followup_messages = [{"role": "system", "content": system_prompt}]
@@ -157,13 +182,26 @@ class JotaInputMixin:
                 "content": self.config_manager.config.tool_followup_prompt,
             })
 
+            followup_request = InferRequest(
+                messages=followup_messages,
+                model=model_id,
+                tools=tools if adapter.capabilities.tool_format == "native" else None,
+                temperature=0.7,
+            )
+
             final_buffer: list[str] = []
-            async for token in adapter.infer(followup_messages, model_id, infer_params):
-                if isinstance(token, dict) and token.get("type") == "tool_call":
+            async for event in adapter.infer(followup_request):
+                if isinstance(event, ToolCallEvent):
                     logger.warning("Nested tool call attempted — ignoring.")
-                else:
-                    final_buffer.append(token)
-                    yield token
+                elif isinstance(event, TextDelta):
+                    final_buffer.append(event.content)
+                    yield event.content
+                elif isinstance(event, ErrorEvent):
+                    logger.error(f"Provider error during re-inference: {event.message}")
+                    yield f" [Error: {event.message}]"
+                    return
+                elif isinstance(event, DoneEvent):
+                    break
 
             if not stateless and final_buffer:
                 await self.memory_manager.save_message(

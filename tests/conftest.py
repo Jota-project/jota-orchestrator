@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture(scope="session")
@@ -29,21 +29,25 @@ def mock_memory_manager():
 
 @pytest.fixture
 def mock_provider():
-    """A mock BaseProvider that yields a single token."""
-    async def _infer(messages, model, params=None):
-        yield "Hello world"
+    """A mock BaseProvider that yields TextDelta + DoneEvent."""
+    from src.services.providers.types import TextDelta, DoneEvent, ProviderCapabilities
 
-    p = AsyncMock()
+    async def _infer(request):
+        yield TextDelta(content="Hello world")
+        yield DoneEvent()
+
+    p = MagicMock()
     p.infer = _infer
+    p.capabilities = ProviderCapabilities(tool_format="native")
     p.check_health = AsyncMock(return_value=True)
     return p
 
 
 @pytest.fixture
 def mock_provider_manager(mock_provider):
-    pm = AsyncMock()
-    pm.get_adapter = AsyncMock(return_value=mock_provider)
-    pm.get_default = AsyncMock(return_value=("prov-test", "model-test"))
+    pm = MagicMock()
+    pm.get_adapter = MagicMock(return_value=mock_provider)
+    pm.get_default = MagicMock(return_value=("prov-test", "model-test"))
     pm.check_health = AsyncMock(return_value={"prov-test": True})
     return pm
 
@@ -51,7 +55,7 @@ def mock_provider_manager(mock_provider):
 @pytest.fixture
 def mock_config_manager():
     from src.core.config_manager import OrchestratorConfig
-    cm = AsyncMock()
+    cm = MagicMock()
     cm.config = OrchestratorConfig(
         default_provider_id="prov-test",
         system_prompt="Eres Jota.",
