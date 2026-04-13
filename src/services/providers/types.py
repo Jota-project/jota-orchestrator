@@ -1,6 +1,6 @@
 # src/services/providers/types.py
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 # ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ from typing import Literal
 class ToolSchema:
     name: str
     description: str
-    parameters: dict  # JSON Schema object {"type": "object", "properties": {...}}
+    parameters: dict[str, Any]  # JSON Schema object {"type": "object", "properties": {...}}
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ class ToolSchema:
 
 @dataclass
 class InferRequest:
-    messages: list[dict]
+    messages: list[dict[str, Any]]
     model: str
     tools: list[ToolSchema] | None = None
     temperature: float = 0.7
@@ -69,7 +69,7 @@ InferEvent = TextDelta | ToolCallEvent | ErrorEvent | DoneEvent
 # The controller reads tool_format to decide how to deliver tools.
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class ProviderCapabilities:
     tool_format: Literal["native", "xml", "anthropic_tool_use"]
     supports_streaming: bool = True
