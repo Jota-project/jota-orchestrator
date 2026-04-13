@@ -1,3 +1,4 @@
+# src/services/providers/manager.py
 import logging
 from .base import BaseProvider
 from .openai_compatible import OpenAICompatibleAdapter
@@ -7,10 +8,14 @@ from .gemini import GeminiAdapter
 logger = logging.getLogger(__name__)
 
 _ADAPTER_MAP = {
-    "openai_compatible": OpenAICompatibleAdapter,
+    "openai": OpenAICompatibleAdapter,
+    "local": OpenAICompatibleAdapter,   # placeholder until jota-inference exposes HTTP API
     "anthropic": AnthropicAdapter,
     "gemini": GeminiAdapter,
 }
+
+# Types that use OpenAICompatibleAdapter and need base_url + api_key constructor args
+_OPENAI_COMPATIBLE_TYPES = {"openai", "local", "openai_compatible"}
 
 
 class ProviderNotFoundError(Exception):
@@ -38,16 +43,21 @@ class ProviderManager:
         self._default_provider_id = default_provider_id
 
         for p in providers:
-            provider_id = p["id"]
-            provider_type = p.get("type", "openai_compatible")
+            provider_id = p["id"]                          # FIX: was p["name"]
+            provider_type = p.get("type", "openai")
             adapter_class = _ADAPTER_MAP.get(provider_type)
 
             if not adapter_class:
-                logger.warning(f"Unknown provider type {provider_type!r} for provider {provider_id!r} — skipping")
+                logger.warning(
+                    f"Unknown provider type {provider_type!r} for provider {provider_id!r} — skipping"
+                )
                 continue
 
-            if provider_type == "openai_compatible":
-                adapter = adapter_class(base_url=p.get("base_url", ""), api_key=p.get("api_key", ""))
+            if provider_type in _OPENAI_COMPATIBLE_TYPES:
+                adapter = adapter_class(
+                    base_url=p.get("base_url"),            # None means use SDK default (OpenAI)
+                    api_key=p.get("api_key", ""),
+                )
             else:
                 adapter = adapter_class()
 

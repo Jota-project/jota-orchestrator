@@ -1,3 +1,4 @@
+# tests/unit/test_provider_manager.py
 import pytest
 from unittest.mock import AsyncMock, patch
 from src.services.providers.manager import ProviderManager, ProviderNotFoundError
@@ -7,7 +8,7 @@ PROVIDERS_FIXTURE = [
     {
         "id": "prov-local",
         "name": "Local LLM",
-        "type": "openai_compatible",
+        "type": "local",
         "base_url": "http://jota-inference:8002",
         "api_key": "local-key",
         "default_model_id": "llama-3.2-3b",
@@ -16,8 +17,8 @@ PROVIDERS_FIXTURE = [
     {
         "id": "prov-openai",
         "name": "OpenAI",
-        "type": "openai_compatible",
-        "base_url": "https://api.openai.com/v1",
+        "type": "openai",
+        "base_url": None,
         "api_key": "sk-abc",
         "default_model_id": "gpt-4o",
         "is_active": True,
@@ -26,7 +27,7 @@ PROVIDERS_FIXTURE = [
         "id": "prov-anthropic",
         "name": "Anthropic",
         "type": "anthropic",
-        "base_url": "",
+        "base_url": None,
         "api_key": "ant-key",
         "default_model_id": "claude-3-5-sonnet",
         "is_active": True,
@@ -76,8 +77,9 @@ async def test_get_default_raises_before_init():
 async def test_init_skips_unknown_types(caplog):
     providers_with_unknown = PROVIDERS_FIXTURE + [{
         "id": "prov-unknown",
+        "name": "Unknown",
         "type": "unknown_provider",
-        "base_url": "",
+        "base_url": None,
         "api_key": "",
         "default_model_id": "",
     }]

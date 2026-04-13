@@ -6,6 +6,7 @@ from openai import AsyncOpenAI
 
 from src.core.constants import TOOL_CALL_OPEN, TOOL_CALL_CLOSE
 from .base import BaseProvider
+from .types import ProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,11 @@ class OpenAICompatibleAdapter(BaseProvider):
     stream de texto, de la misma forma que el sistema actual.
     """
 
-    def __init__(self, base_url: str, api_key: str):
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(tool_format="xml")
+
+    def __init__(self, base_url: str | None, api_key: str):
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key or "not-needed")
 
     async def infer(
