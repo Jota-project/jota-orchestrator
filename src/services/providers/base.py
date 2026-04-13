@@ -1,27 +1,32 @@
+# src/services/providers/base.py
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator
+
+from .types import InferRequest, InferEvent, ProviderCapabilities
 
 
 class BaseProvider(ABC):
     """
-    Interfaz común para todos los adapters de inferencia.
-    Cada yield del generador es un str (token de texto) o un dict
-    con {"type": "tool_call", "payload": {...}}.
+    Common interface for all inference adapters.
+
+    Each adapter must:
+    - Declare its capabilities via the `capabilities` property.
+    - Implement `infer()` yielding InferEvent instances.
+    - Always yield DoneEvent as the final event.
+    - Yield ErrorEvent for recoverable stream errors; raise for unrecoverable ones.
     """
+
+    @property
+    @abstractmethod
+    def capabilities(self) -> ProviderCapabilities: ...
 
     @abstractmethod
     async def infer(
-        self,
-        messages: list[dict],
-        model: str,
-        params: dict | None = None,
-    ) -> AsyncGenerator[str | dict, None]:
-        ...
+        self, request: InferRequest
+    ) -> AsyncGenerator[InferEvent, None]: ...
 
     @abstractmethod
-    async def list_models(self) -> list[str]:
-        ...
+    async def list_models(self) -> list[str]: ...
 
     @abstractmethod
-    async def check_health(self) -> bool:
-        ...
+    async def check_health(self) -> bool: ...

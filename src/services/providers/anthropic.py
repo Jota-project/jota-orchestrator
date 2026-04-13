@@ -1,12 +1,20 @@
+# src/services/providers/anthropic.py
+from typing import AsyncGenerator
+
 from .base import BaseProvider
+from .types import InferRequest, InferEvent, DoneEvent, ProviderCapabilities
 
 
 class AnthropicAdapter(BaseProvider):
     """Placeholder — Anthropic adapter not yet implemented."""
 
-    async def infer(self, messages, model, params=None):
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(tool_format="anthropic_tool_use")
+
+    async def infer(self, request: InferRequest) -> AsyncGenerator[InferEvent, None]:
         raise NotImplementedError("Anthropic adapter not yet implemented")
-        yield  # make it an async generator
+        yield DoneEvent()  # makes this an async generator
 
     async def list_models(self) -> list[str]:
         raise NotImplementedError("Anthropic adapter not yet implemented")
