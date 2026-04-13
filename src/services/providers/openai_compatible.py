@@ -1,98 +1,100 @@
+# src/services/providers/openai_compatible.py
 import json
 import logging
 from typing import AsyncGenerator
 
 from openai import AsyncOpenAI
 
-from src.core.constants import TOOL_CALL_OPEN, TOOL_CALL_CLOSE
 from .base import BaseProvider
-from .types import ProviderCapabilities
+from .types import (
+    InferRequest, InferEvent,
+    TextDelta, ToolCallEvent, DoneEvent, ErrorEvent,
+    ProviderCapabilities, ToolSchema,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleAdapter(BaseProvider):
     """
-    Adapter para cualquier provider con API compatible con OpenAI
-    (jota-inference local, OpenAI, Ollama, Groq, Mistral, etc.).
+    Adapter for any OpenAI-compatible API (OpenAI, Groq, Mistral, local HTTP, etc.).
 
-    Tool calls se detectan como XML (<tool_call>...</tool_call>) en el
-    stream de texto, de la misma forma que el sistema actual.
+    Tool calls are delivered via OpenAI's native function calling protocol:
+    structured delta fields, not XML pattern matching.
     """
+
+    def __init__(self, base_url: str | None, api_key: str):
+        self._client = AsyncOpenAI(
+            base_url=base_url or None,   # None → SDK uses api.openai.com
+            api_key=api_key or "not-needed",
+        )
 
     @property
     def capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(tool_format="xml")
+        return ProviderCapabilities(tool_format="native")
 
-    def __init__(self, base_url: str | None, api_key: str):
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key or "not-needed")
-
-    async def infer(
-        self,
-        messages: list[dict],
-        model: str,
-        params: dict | None = None,
-    ) -> AsyncGenerator[str | dict, None]:
-        params = params or {}
-        kwargs = {
-            "model": model,
-            "messages": messages,
+    async def infer(self, request: InferRequest) -> AsyncGenerator[InferEvent, None]:
+        kwargs: dict = {
+            "model": request.model,
+            "messages": request.messages,
             "stream": True,
-            "temperature": params.get("temp", 0.7),
+            "temperature": request.temperature,
         }
-        if "max_tokens" in params:
-            kwargs["max_tokens"] = params["max_tokens"]
+        if request.max_tokens is not None:
+            kwargs["max_tokens"] = request.max_tokens
+        if request.tools:
+            kwargs["tools"] = [self._to_openai_tool(t) for t in request.tools]
+            kwargs["tool_choice"] = "auto"
 
-        response_buffer: list[str] = []
-        yielded_len = 0
+        # Accumulate tool call deltas: index → {"name": str, "arguments": str}
+        tool_call_chunks: dict[int, dict] = {}
 
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if not chunk.choices:
                 continue
-            delta = chunk.choices[0].delta
-            if not delta or not delta.content:
-                continue
 
-            response_buffer.append(delta.content)
-            full_text = "".join(response_buffer)
+            choice = chunk.choices[0]
+            delta = choice.delta
 
-            if TOOL_CALL_OPEN in full_text:
-                start_idx = full_text.find(TOOL_CALL_OPEN)
-                # Yield text before tool call
-                if start_idx > yielded_len:
-                    chunk_text = full_text[yielded_len:start_idx]
-                    yielded_len += len(chunk_text)
-                    yield chunk_text
+            # Text tokens
+            if delta.content:
+                yield TextDelta(content=delta.content)
 
-                # Check if tool call is closed
-                if TOOL_CALL_CLOSE in full_text[start_idx:]:
-                    end_idx = full_text.find(TOOL_CALL_CLOSE, start_idx) + len(TOOL_CALL_CLOSE)
-                    if end_idx > yielded_len:
-                        yielded_len = end_idx
-                        raw_json = full_text[start_idx + len(TOOL_CALL_OPEN):end_idx - len(TOOL_CALL_CLOSE)].strip()
-                        try:
-                            tool_data = json.loads(raw_json)
-                            yield {"type": "tool_call", "payload": tool_data}
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse tool call JSON: {e}")
-            else:
-                # No tool call in buffer — yield safe portion
-                safe_text = full_text
-                last_lt = full_text.rfind("<")
-                if last_lt != -1 and last_lt >= len(full_text) - len(TOOL_CALL_OPEN):
-                    if TOOL_CALL_OPEN.startswith(full_text[last_lt:]):
-                        safe_text = full_text[:last_lt]
+            # Tool call delta chunks — accumulate by index
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_call_chunks:
+                        tool_call_chunks[idx] = {"name": "", "arguments": ""}
+                    if tc.function and tc.function.name:
+                        tool_call_chunks[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        tool_call_chunks[idx]["arguments"] += tc.function.arguments
 
-                if len(safe_text) > yielded_len:
-                    chunk_text = safe_text[yielded_len:]
-                    yielded_len += len(chunk_text)
-                    yield chunk_text
+            # finish_reason == "tool_calls" means all chunks for this call are in
+            if choice.finish_reason == "tool_calls":
+                for idx in sorted(tool_call_chunks.keys()):
+                    tc = tool_call_chunks[idx]
+                    try:
+                        arguments = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse tool call arguments for '{tc['name']}': {e}")
+                        arguments = {}
+                    yield ToolCallEvent(name=tc["name"], arguments=arguments)
+                tool_call_chunks.clear()
 
-        # Yield any remaining text
-        full_text = "".join(response_buffer)
-        if len(full_text) > yielded_len:
-            yield full_text[yielded_len:]
+        yield DoneEvent()
+
+    def _to_openai_tool(self, tool: ToolSchema) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
 
     async def list_models(self) -> list[str]:
         models = await self._client.models.list()
