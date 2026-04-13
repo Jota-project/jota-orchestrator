@@ -11,6 +11,9 @@ import time
 
 from src.core.services import memory_manager, provider_manager, config_manager
 from src.core.tool_manager import tool_manager
+from src.services.providers.types import (
+    InferRequest, TextDelta, ToolCallEvent, ErrorEvent, DoneEvent,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -42,12 +45,16 @@ async def _quick_stream_generator(
 ) -> AsyncGenerator[str, None]:
     log_prefix = f"[QUICK][Client: {client_id}]"
 
+    # Resolve tools
+    tools = tool_manager.get_typed_tool_schemas(client_id=client_id)
+
     # Build system prompt
-    tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
     base_prompt = config_manager.config.system_prompt
     full_prompt = f"{base_prompt}\n\n{QUICK_SYSTEM_PROMPT_PREFIX}"
-    if tool_instructions:
-        full_prompt += f"\n{tool_instructions}"
+    if adapter.capabilities.tool_format == "xml" and tools:
+        tool_instructions = tool_manager.get_system_prompt_addition(client_id=client_id)
+        if tool_instructions:
+            full_prompt += f"\n{tool_instructions}"
     if request.system_prompt_extra:
         full_prompt += f"\n{request.system_prompt_extra}"
 
@@ -55,18 +62,23 @@ async def _quick_stream_generator(
         {"role": "system", "content": full_prompt},
         {"role": "user", "content": request.text},
     ]
-    quick_params = {"temp": 0.3, "max_tokens": 150}
-    quick_final_params = {"temp": 0.3, "max_tokens": 100}
+
+    infer_request = InferRequest(
+        messages=messages,
+        model=model_id,
+        tools=tools if adapter.capabilities.tool_format == "native" else None,
+        temperature=0.3,
+        max_tokens=150,
+    )
 
     tool_executed = False
     tool_context: list[dict] = []
 
     try:
-        async for token in adapter.infer(messages, model_id, quick_params):
-            if isinstance(token, dict) and token.get("type") == "tool_call":
-                tc_payload = token.get("payload", {})
-                tool_name = tc_payload.get("name")
-                tool_args = tc_payload.get("arguments", {})
+        async for event in adapter.infer(infer_request):
+            if isinstance(event, ToolCallEvent):
+                tool_name = event.name
+                tool_args = event.arguments
 
                 logger.info(f"{log_prefix} Tool call: {tool_name}")
                 yield json.dumps({"type": "status", "content": f"Buscando información usando {tool_name}..."}) + "\n"
@@ -79,7 +91,7 @@ async def _quick_stream_generator(
 
                     tool_context = [
                         {"role": "user", "content": request.text},
-                        {"role": "assistant", "content": f"<tool_call>{json.dumps(tc_payload)}</tool_call>"},
+                        {"role": "assistant", "content": json.dumps({"name": tool_name, "arguments": tool_args})},
                         {"role": "tool", "content": result_str},
                     ]
                     yield json.dumps({"type": "status", "content": f"Búsqueda completada en {duration}. Generando respuesta..."}) + "\n"
@@ -88,18 +100,37 @@ async def _quick_stream_generator(
                     logger.error(f"{log_prefix} Tool {tool_name} failed: {e}")
                     yield json.dumps({"type": "status", "content": f"Error al usar {tool_name}: {e}"}) + "\n"
                     tool_executed = True
-            else:
-                if not tool_executed and isinstance(token, str):
-                    yield json.dumps({"type": "token", "content": token}) + "\n"
+
+            elif isinstance(event, TextDelta):
+                if not tool_executed:
+                    yield json.dumps({"type": "token", "content": event.content}) + "\n"
+
+            elif isinstance(event, ErrorEvent):
+                yield json.dumps({"type": "error", "content": event.message}) + "\n"
+                return
+
+            elif isinstance(event, DoneEvent):
+                break
 
         if tool_executed:
             yield json.dumps({"type": "status", "content": "Analizando resultados..."}) + "\n"
-            followup_messages = [{"role": "system", "content": full_prompt}] + tool_context + [
-                {"role": "user", "content": config_manager.config.tool_followup_prompt}
-            ]
-            async for token in adapter.infer(followup_messages, model_id, quick_final_params):
-                if isinstance(token, str):
-                    yield json.dumps({"type": "token", "content": token}) + "\n"
+            followup_messages = (
+                [{"role": "system", "content": full_prompt}]
+                + tool_context
+                + [{"role": "user", "content": config_manager.config.tool_followup_prompt}]
+            )
+            followup_request = InferRequest(
+                messages=followup_messages,
+                model=model_id,
+                tools=tools if adapter.capabilities.tool_format == "native" else None,
+                temperature=0.3,
+                max_tokens=100,
+            )
+            async for event in adapter.infer(followup_request):
+                if isinstance(event, TextDelta):
+                    yield json.dumps({"type": "token", "content": event.content}) + "\n"
+                elif isinstance(event, DoneEvent):
+                    break
 
     except Exception as e:
         logger.error(f"{log_prefix} Error: {e}")

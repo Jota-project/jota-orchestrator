@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.api.quick import _quick_stream_generator, QUICK_SYSTEM_PROMPT_PREFIX, QuickRequest
+from src.services.providers.types import TextDelta, DoneEvent, ProviderCapabilities
 
 
 async def _collect(gen) -> list[dict]:
@@ -18,11 +19,13 @@ async def _collect(gen) -> list[dict]:
 def _make_adapter(tokens=("hola",)):
     adapter = MagicMock()
 
-    async def fake_infer(messages, model, params=None):
+    async def fake_infer(request):
         for t in tokens:
-            yield t
+            yield TextDelta(content=t)
+        yield DoneEvent()
 
     adapter.infer = MagicMock(side_effect=fake_infer)
+    adapter.capabilities = ProviderCapabilities(tool_format="native")
     return adapter
 
 
@@ -37,7 +40,8 @@ def mock_config():
 @pytest.fixture
 def mock_tools():
     with patch("src.api.quick.tool_manager") as mock:
-        mock.get_system_prompt_addition = MagicMock(return_value=None)
+        mock.get_typed_tool_schemas.return_value = []
+        mock.get_system_prompt_addition.return_value = None
         yield mock
 
 
@@ -49,8 +53,8 @@ async def test_system_prompt_extra_appended_when_provided(mock_config, mock_tool
     await _collect(_quick_stream_generator(adapter, "cid", "model-x", request))
 
     call_args = adapter.infer.call_args
-    messages = call_args[0][0]
-    system_content = messages[0]["content"]
+    infer_request = call_args[0][0]
+    system_content = infer_request.messages[0]["content"]
     assert "responde siempre en inglés" in system_content
 
 
@@ -62,8 +66,8 @@ async def test_system_prompt_extra_not_present_when_none(mock_config, mock_tools
     await _collect(_quick_stream_generator(adapter, "cid", "model-x", request))
 
     call_args = adapter.infer.call_args
-    messages = call_args[0][0]
-    system_content = messages[0]["content"]
+    infer_request = call_args[0][0]
+    system_content = infer_request.messages[0]["content"]
     assert QUICK_SYSTEM_PROMPT_PREFIX.strip() in system_content
     assert "responde siempre en inglés" not in system_content
 
@@ -76,6 +80,6 @@ async def test_system_prompt_extra_empty_string_ignored(mock_config, mock_tools)
     await _collect(_quick_stream_generator(adapter, "cid", "model-x", request))
 
     call_args = adapter.infer.call_args
-    messages = call_args[0][0]
-    system_content = messages[0]["content"]
+    infer_request = call_args[0][0]
+    system_content = infer_request.messages[0]["content"]
     assert QUICK_SYSTEM_PROMPT_PREFIX.strip() in system_content
