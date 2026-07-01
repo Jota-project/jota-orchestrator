@@ -1,3 +1,11 @@
+![Status: Alternative](https://img.shields.io/badge/status-Alternative-yellow)
+
+> ⚠️ **Este repo está en modo Alternative.** El camino recomendado es [OpenClaw](https://github.com/Jota-project/.github/blob/main/ARCHITECTURE.md) (orquestador externo open source). Mantenemos este código por compatibilidad con setups 100% locales que usan `jota-orchestrator` + `jota-inference` como camino LLM propio. Recibe parches solo para issues críticas; los PRs nuevos se priorizan contra los repos `Maintained` (ver [org README](https://github.com/Jota-project/.github)).
+>
+> Si estás empezando un deploy nuevo, usa OpenClaw + `llama.cpp` standalone.
+
+---
+
 # Jota: Ecosistema de Asistente Virtual Persistente
 
 Jota es un ecosistema de asistencia inteligente diseñado para ofrecer una memoria unificada y lógica centralizada. Prioriza el procesamiento local y la extensibilidad mediante una arquitectura de microservicios.
@@ -55,12 +63,12 @@ El sistema se divide en módulos especializados:
 
 ### Variables de Entorno
 
+> **Nota:** `JOTA_DB_URL` y `JOTA_DB_SK` ya no se usan. El gateway ahora resuelve identidad vía SQLite local y propaga `x-client-key` + `x-client-id` por header al orquestador. Si mantienes un setup legacy, consulta [`Jota-project/jota-db`](https://github.com/Jota-project/jota-db).
+
 Crea un archivo `.env` basado en `.env.example`. Variables disponibles:
 
 ```env
 # --- Servicios externos (obligatorias) ---
-JOTA_DB_URL="http://localhost:8080"
-JOTA_DB_SK="tu_server_key"
 INFERENCE_SERVICE_URL="ws://host:3000/api/inference"
 ORCHESTRATOR_ID="tu_id"
 ORCHESTRATOR_API_KEY="tu_api_key"
@@ -132,3 +140,9 @@ docker compose logs -f
 - Usa `python:3.12-slim`.
 - **Gunicorn** con **1 worker Uvicorn** (múltiples workers rompen el estado WebSocket compartido entre el Orchestrator y el InferenceEngine).
 - `network_mode: "host"` para integración en redes locales.
+
+## Status & roadmap
+
+- **Status:** Alternative. Frozen on `1.1.0` (2026-04-05).
+- **No new feature work planned.** The recommended path is OpenClaw. Maintenance is limited to critical fixes.
+- **For new deployments:** use OpenClaw + llama.cpp. See [org ARCHITECTURE.md](https://github.com/Jota-project/.github/blob/main/ARCHITECTURE.md).
