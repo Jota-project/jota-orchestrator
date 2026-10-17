@@ -1,10 +1,10 @@
 fastapi
 uvicorn[standard]
 pydantic-settings
-websockets
 httpx
 pytest
 pytest-asyncio
 gunicorn
 tavily-python
 mcp
+openai

@@ -7,11 +7,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "JotaOrchestrator"
     APP_ENV: str = "development"
     DEBUG: bool = False
-
-    TRANSCRIPTION_SERVICE_URL: str
-
-    INFERENCE_SERVICE_URL: str
-
+    
     # Internal Services Authentication
     ORCHESTRATOR_ID: str       # ID del Orchestrator para servicios internos
     ORCHESTRATOR_API_KEY: str  # API Key del Orchestrator para servicios internos
@@ -29,16 +25,6 @@ class Settings(BaseSettings):
         "The tool has provided the results. "
         "Please answer the original user query using this information."
     )
-
-    # ---------------------------------------------------------------------------
-    # Inference parameters
-    # ---------------------------------------------------------------------------
-    INFERENCE_DEFAULT_TEMP: float = 0.7
-    INFERENCE_TOKEN_TIMEOUT: float = 30.0     # seconds to wait for next token
-    INFERENCE_LOAD_MODEL_TIMEOUT: float = 30.0
-    INFERENCE_LIST_MODELS_TIMEOUT: float = 10.0
-    INFERENCE_SESSION_TIMEOUT: float = 5.0
-    MODELS_CACHE_TTL: float = 300.0           # seconds model list is cached
 
     # ---------------------------------------------------------------------------
     # Tool output limits

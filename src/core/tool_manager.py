@@ -129,6 +129,22 @@ class ToolManager:
             if ROLE_HIERARCHY.get(s.get("required_role", ROLE_PUBLIC), 0) <= client_role_level
         ]
     
+    def get_typed_tool_schemas(self, client_id: Any = None) -> list:
+        """Returns accessible tools as ToolSchema dataclasses.
+
+        For use by provider adapters — provides the canonical tool representation
+        that each adapter converts to its native format.
+        """
+        from src.services.providers.types import ToolSchema
+        return [
+            ToolSchema(
+                name=s["name"],
+                description=s["description"],
+                parameters=s["parameters"],
+            )
+            for s in self.get_tool_schemas(client_id)
+        ]
+
     # ------------------------------------------------------------------
     # Tool execution
     # ------------------------------------------------------------------
