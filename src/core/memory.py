@@ -306,7 +306,7 @@ class MemoryManager:
         """
         try:
             response = await self.client.get(
-                f"{self.base_url}/internal/service-config/{settings.ORCHESTRATOR_ID}",
+                f"{self.base_url}/internal/service-config/orchestrator",
                 headers={
                     **self.base_headers,
                     "X-API-Key": settings.ORCHESTRATOR_API_KEY,
@@ -314,7 +314,8 @@ class MemoryManager:
             )
             response.raise_for_status()
             raw = response.json()
-            return {item["key"]: item["value"] for item in raw}
+
+            return raw
         except Exception as e:
             logger.error(f"Failed to fetch orchestrator config: {e}")
             return {}
