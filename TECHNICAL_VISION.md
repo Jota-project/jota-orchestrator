@@ -1,3 +1,5 @@
+> ⚠️ **Legacy · Archived.** Este documento describe jota-orchestrator, un componente legado de Jota sustituido por OpenClaw (https://github.com/openclaw/openclaw). Arquitectura actual: https://github.com/jota-project/.github/blob/main/ARCHITECTURE.md
+
 # Visión Técnica: Jota - El Cerebro Centralizado
 
 Este documento define la arquitectura, los estándares y la hoja de ruta para **Jota**, un ecosistema de asistente virtual diseñado para la persistencia, la conciencia contextual y la eficiencia.

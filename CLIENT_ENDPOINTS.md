@@ -1,3 +1,5 @@
+> ⚠️ **Legacy · Archived.** Este documento describe jota-orchestrator, un componente legado de Jota sustituido por OpenClaw (https://github.com/openclaw/openclaw). Arquitectura actual: https://github.com/jota-project/.github/blob/main/ARCHITECTURE.md
+
 # JotaOrchestrator — Documentación de Endpoints para Clientes
 
 ## Tabla de Contenidos
