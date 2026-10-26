@@ -1,8 +1,6 @@
-![Status: Alternative](https://img.shields.io/badge/status-Alternative-yellow)
+![Status: Legacy · Archived](https://img.shields.io/badge/status-Legacy%20%C2%B7%20Archived-lightgrey)
 
-> ⚠️ **Este repo está en modo Alternative.** El camino recomendado es [OpenClaw](https://github.com/Jota-project/.github/blob/main/ARCHITECTURE.md) (orquestador externo open source). Mantenemos este código por compatibilidad con setups 100% locales que usan `jota-orchestrator` + `jota-inference` como camino LLM propio. Recibe parches solo para issues críticas; los PRs nuevos se priorizan contra los repos `Maintained` (ver [org README](https://github.com/Jota-project/.github)).
->
-> Si estás empezando un deploy nuevo, usa OpenClaw + `llama.cpp` standalone.
+> ⚠️ **Legacy · Archived.** Sustituido por OpenClaw (https://github.com/openclaw/openclaw) dentro de la arquitectura actual de Jota: https://github.com/jota-project/.github/blob/main/ARCHITECTURE.md
 
 ---
 
@@ -143,6 +141,5 @@ docker compose logs -f
 
 ## Status & roadmap
 
-- **Status:** Alternative. Frozen on `1.1.0` (2026-04-05).
-- **No new feature work planned.** The recommended path is OpenClaw. Maintenance is limited to critical fixes.
-- **For new deployments:** use OpenClaw + llama.cpp. See [org ARCHITECTURE.md](https://github.com/Jota-project/.github/blob/main/ARCHITECTURE.md).
+- **Status:** Legacy · Archived. Frozen on `1.1.0` (2026-04-05). No further development or maintenance.
+- **Replaced by** [OpenClaw](https://github.com/openclaw/openclaw). Current Jota architecture: https://github.com/jota-project/.github/blob/main/ARCHITECTURE.md
